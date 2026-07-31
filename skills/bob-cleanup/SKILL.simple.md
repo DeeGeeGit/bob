@@ -188,26 +188,28 @@ Task(subagent_type: "Bash",
      run_in_background: true,
      prompt: "Check if already in a worktree, or create a new one.
 
-             1. Check:
-                COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo '')
-                GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo '')
-                if [ '$COMMON_DIR' != '$GIT_DIR' ] && [ '$COMMON_DIR' != '.git' ]; then
+             1. Resolve the repository root, cd to it, then check:
+                REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo \"Not in a git repository\"; exit 1; }
+                cd \"$REPO_ROOT\"
+                COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
+                GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
+                if [ \"$COMMON_DIR\" != \"$GIT_DIR\" ]; then
                     echo 'Already in worktree - skipping creation'
-                    echo 'WORKTREE_PATH='$(git rev-parse --show-toplevel)
+                    echo \"WORKTREE_PATH=$REPO_ROOT\"
                     mkdir -p .bob/state
                     git branch --show-current
                     exit 0
                 fi
 
              2. If not in worktree:
-                REPO_NAME=$(basename $(git rev-parse --show-toplevel))
-                FEATURE_NAME='cleanup-[short-description]'
-                WORKTREE_DIR='../${REPO_NAME}-worktrees/${FEATURE_NAME}'
-                mkdir -p '../${REPO_NAME}-worktrees'
-                git worktree add '$WORKTREE_DIR' -b '$FEATURE_NAME'
-                mkdir -p '$WORKTREE_DIR/.bob/state'
-                echo 'WORKTREE_PATH='$(cd '$WORKTREE_DIR' && pwd)
-                cd '$WORKTREE_DIR' && git branch --show-current")
+                REPO_NAME=$(basename \"$REPO_ROOT\")
+                FEATURE_NAME=\"cleanup-[short-description]\"
+                WORKTREE_DIR=\"../${REPO_NAME}-worktrees/${FEATURE_NAME}\"
+                mkdir -p \"../${REPO_NAME}-worktrees\"
+                git worktree add \"$WORKTREE_DIR\" -b \"$FEATURE_NAME\"
+                mkdir -p \"$WORKTREE_DIR/.bob/state\"
+                echo \"WORKTREE_PATH=$(cd \"$WORKTREE_DIR\" && pwd)\"
+                cd \"$WORKTREE_DIR\" && git branch --show-current")
 ```
 
 After completion:

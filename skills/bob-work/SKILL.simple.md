@@ -332,21 +332,22 @@ Task(subagent_type: "Bash",
      run_in_background: true,
      prompt: "Check if we're already in a worktree, or create a new one for isolated development.
 
-             1. Check if we're already in a worktree:
-                COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo \"\")
-                GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo \"\")
+             1. Resolve the repository root, cd to it, and check if we're already in a worktree:
+                REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo \"Not in a git repository\"; exit 1; }
+                cd \"$REPO_ROOT\"
+                COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
+                GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 
-                if [ \"$COMMON_DIR\" != \"$GIT_DIR\" ] && [ \"$COMMON_DIR\" != \".git\" ]; then
+                if [ \"$COMMON_DIR\" != \"$GIT_DIR\" ]; then
                     echo \"Already in worktree - skipping creation\"
-                    WORKTREE_PATH=$(git rev-parse --show-toplevel)
-                    echo \"WORKTREE_PATH=$WORKTREE_PATH\"
+                    echo \"WORKTREE_PATH=$REPO_ROOT\"
                     mkdir -p \".bob/state\"
                     git branch --show-current
                     exit 0
                 fi
 
              2. If not in worktree, derive the repo name and worktree path:
-                REPO_NAME=$(basename $(git rev-parse --show-toplevel))
+                REPO_NAME=$(basename \"$REPO_ROOT\")
                 FEATURE_NAME=\"<descriptive-feature-name>\"
                 WORKTREE_DIR=\"../${REPO_NAME}-worktrees/${FEATURE_NAME}\"
 
