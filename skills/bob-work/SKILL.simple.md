@@ -55,9 +55,18 @@ The final REVIEW phase invokes `/bob:code-review`, which handles REVIEW → FIX 
 
 **Key difference from bob:work**: EXECUTE and REVIEW phases run concurrently with teammate agents communicating directly.
 
+## Seeded plan mode (optional)
+
+```
+/bob:work --seed-plan path/to/plan.md "task description"
+```
+
+When the task begins with `--seed-plan <path>`, a pre-computed implementation plan drives the run. No phase is skipped: the knowledge team is still created and stays alive for coder/reviewer questions, but the brainstorm task becomes *an advisory check of the seed against the codebase* (the brainstormer records red flags in brainstorm.md for coders and reviewers to see — the check does not gate adoption) and the plan task becomes *check actionability, then adopt the seed verbatim as plan.md*. Everything downstream (task list, execution team, TEST, REVIEW, COMPLETE) is unchanged. Seeding is **one-shot** — loop-backs from REVIEW run the normal brainstorm/plan actions with the seed available as prior context. Off by default; seeded is a property of the current invocation only — active when this invocation carries the option, never inferred from state files a reused worktree may retain.
+
 <strict_enforcement>
 All phases MUST be executed in the exact order specified.
 NO phases may be skipped under any circumstances.
+Seeded-plan mode substitutes the documented seeded ACTIONS within BRAINSTORM and PLAN; it does not skip phases.
 The orchestrator MUST follow each step exactly as written.
 Each phase has specific prerequisites that MUST be satisfied before proceeding.
 </strict_enforcement>
@@ -205,13 +214,36 @@ The workflow runs autonomously from INIT through COMMIT. The team lead's job is 
 
 **Actions:**
 
-1. **Greet the user** (two lines max):
+1. **Detect seeded plan (parse FIRST — before anything else reads or echoes the task text; validate NOW, before WORKTREE changes directory):**
+
+   If the task text begins with `--seed-plan <path>`, parse and strip the option and its path from the task text BEFORE any other consumer reads it — before step 2's greeting echoes the task text, and before step 4's adversarial-mode detection scans it — so raw `--seed-plan` option text can never appear in the greeting and a seed filename containing the word "adversarial" cannot flip modes. Every later step operates on the stripped task text.
+
+   Then spawn a Bash agent to validate the seed from the invocation directory (WORKTREE changes cwd later — a relative path must resolve from where `/bob:work` was invoked):
+
+   ```
+   Task(subagent_type: "Bash",
+        description: "Validate seeded plan file",
+        run_in_background: true,
+        prompt: "Resolve and validate a seeded plan file.
+                SEED=$(realpath \"<path>\" 2>/dev/null)
+                if [ -n \"$SEED\" ] && [ -f \"$SEED\" ] && [ -r \"$SEED\" ] && [ -s \"$SEED\" ]; then
+                    echo \"SEED_PLAN=$SEED\"
+                else
+                    echo \"SEED_PLAN_ERROR=not a readable, non-empty regular file: <path>\"
+                fi")
+   ```
+
+   On `SEED_PLAN_ERROR`: STOP and surface the error to the user (same pattern as the agent-teams check). On success: remember the absolute `SEED_PLAN` path for Phase 3, and remember that THIS invocation is a **seeded run** — that remembered fact is the run's seeded-run latch. Every seeded action in this workflow keys on the latch, never on whether `.bob/state/seed-plan.md` exists on disk: a reused worktree can retain a stale `.bob/state/seed-plan.md` from an earlier run, and on an unseeded run (no `--seed-plan` in this invocation) that file is ignored entirely — never read, never offered as context, never a reason to run a seeded action.
+
+2. **Greet the user** (two lines max):
 
    ```
    Bob here. Building: [feature description]
    ```
 
-2. **Verify experimental flag is enabled:**
+   (Seeded runs: `Bob here. Building: [feature description] — seeded plan: <path>` — rendered from the stripped task text of step 1, so the raw `--seed-plan` option text never appears.)
+
+3. **Verify experimental flag is enabled:**
 
    ```
    If running in pi (the `subagent` tool is available): agent teams are always enabled — skip this check.
@@ -226,7 +258,7 @@ The workflow runs autonomously from INIT through COMMIT. The team lead's job is 
    Then restart Claude Code and hoist the sails again!"
    ```
 
-3. **Detect adversarial code review mode:**
+4. **Detect adversarial code review mode** (runs on the stripped task text from step 1):
 
    Spawn a Bash agent to check whether adversarial review is requested:
 
@@ -241,7 +273,9 @@ The workflow runs autonomously from INIT through COMMIT. The team lead's job is 
                   - .bob/config
 
                 Also check whether the task description passed to /bob:work contains
-                the word 'adversarial'.
+                the word 'adversarial'. (The team lead supplies the task text with any
+                --seed-plan option and its path already stripped in step 1 — a seed
+                filename containing 'adversarial' must not flip modes.)
 
                 Output exactly one line:
                   ADVERSARIAL=true   (if any source requests adversarial review)
@@ -250,9 +284,9 @@ The workflow runs autonomously from INIT through COMMIT. The team lead's job is 
 
    Read the output and remember the mode for Phase 8.
 
-4. **Detect workspace mode (OKF and spec-driven):**
+5. **Detect workspace mode (OKF and spec-driven) — executes AFTER WORKTREE:**
 
-   After WORKTREE creates `.bob/state/`, run workspace detection:
+   This step writes `.bob/state/workspace.md`, so it needs the `.bob/state/` directory that WORKTREE creates: it executes immediately after the WORKTREE phase completes (and before Phase 3 reads `workspace.md`). It is specified here because INIT owns mode detection; no step that runs before WORKTREE consumes its output. Run workspace detection:
 
    ```
    Task(subagent_type: "Bash",
@@ -301,14 +335,16 @@ The workflow runs autonomously from INIT through COMMIT. The team lead's job is 
    - `# Scope` section → pre-loaded packages and decisions
    - `# Acceptance Criteria` → hard constraints for the team
 
-   Update the greeting to include workspace mode:
+6. **Update the greeting** (once, immediately after step 5's workspace detection completes — i.e. after WORKTREE, because the workspace line needs step 5's output; this is the only update to step 2's greeting):
 
    ```
-   Bob here. Building: [feature title or prompt description]
+   Bob here. Building: [feature title or prompt description] — seeded plan: <path>
    Workspace: [mode] — [brief mode description]
    ```
 
-5. Move to WORKTREE phase
+   Omit the ` — seeded plan: <path>` suffix on unseeded runs.
+
+7. Move to WORKTREE phase. (Steps 5–6 execute right after WORKTREE completes, before Phase 3 begins.)
 
 ---
 
@@ -406,6 +442,29 @@ Write the task context to `.bob/state/brainstorm-prompt.md`.
 
 Read `.bob/state/workspace.md` first to know what's available.
 
+**Seeded runs (per INIT step 1's seeded-run latch — a leftover `.bob/state/seed-plan.md` on disk never selects this path):** the team lead cannot write state files — a single Bash staging agent writes BOTH `.bob/state/seed-plan.md` AND `.bob/state/brainstorm-prompt.md`. The prompt file begins with a `SEEDED RUN — plan provided at .bob/state/seed-plan.md` header, followed by the same context sections below, which the team lead composes and passes inside the agent prompt (the knowledge team still needs them to answer coder/reviewer questions):
+
+```
+Task(subagent_type: "Bash",
+     description: "Stage seeded plan and write brainstorm prompt",
+     run_in_background: true,
+     prompt: "Stage the seeded plan and write the brainstorm prompt.
+
+             1. mkdir -p .bob/state
+             2. cp \"<SEED_PLAN absolute path>\" .bob/state/seed-plan.md
+             3. Write .bob/state/brainstorm-prompt.md with exactly this content:
+
+                SEEDED RUN — plan provided at .bob/state/seed-plan.md
+
+                [full context sections, substituted by the team lead]
+
+             4. Print STAGED if steps 1-3 all succeeded; otherwise print the failing error.")
+```
+
+**Completion gate:** read the staging agent's output and verify it printed `STAGED` BEFORE Step 3 creates any tasks. If it did not, clean up before stopping — the team already exists (Step 1), so follow the mandatory cleanup rules (Team Management Best Practices → Cleaning Up): message any teammates already spawned to shut down, wait for shutdown confirmations, and clean up the team. Then STOP and surface the staging error to the user.
+
+`.bob/state/seed-plan.md` is never edited afterwards — it is the record of what was seeded.
+
 **If `WORKSPACE_FEATURE` is set** (a Feature concept is driving the workflow):
 
 ```
@@ -457,6 +516,35 @@ TaskCreate(
 )
 ```
 
+**Seeded runs — use these task descriptions instead** (same two tasks, same blocking, seeded actions):
+
+```
+TaskCreate(
+  subject: "Advisory seed check: [feature description]",
+  description: "SEEDED RUN. Read .bob/state/seed-plan.md and .bob/state/brainstorm-prompt.md.
+               Research the codebase only enough to sanity-check the seed (files it modifies exist,
+               approach fits existing patterns). This is an ADVISORY check — it does not gate
+               adoption; the planner adopts the seed regardless. Do NOT redesign. Write a brief
+               context note to .bob/state/brainstorm.md: task restated, advisory check result,
+               any red flags for coders and reviewers to see, spec-driven directories in scope.
+               Then stay alive for questions.",
+  activeForm: "Advisory-checking seeded plan",
+  metadata: { task_type: "brainstorm" }
+)
+```
+
+```
+TaskCreate(
+  subject: "Adopt seeded plan: [feature description]",
+  description: "SEEDED RUN. Read .bob/state/seed-plan.md and FIRST verify it enumerates
+               actionable implementation tasks; if it does not, report the problem and write
+               NO plan.md. Only after that check passes, copy .bob/state/seed-plan.md verbatim
+               to .bob/state/plan.md. Do NOT rewrite or expand the plan.",
+  activeForm: "Adopting seeded plan",
+  metadata: { task_type: "plan" }
+)
+```
+
 Then block the plan task on the brainstorm task:
 
 ```
@@ -493,6 +581,43 @@ to answer questions from coders and reviewers about plan intent and acceptance c
 Working directory: [worktree-path]'"
 ```
 
+**Seeded runs — use these ALTERNATE spawn prompts instead.** The installed agent protocols mandate designing (team-brainstormer: evaluate multiple approaches; team-planner: write a new detailed plan). On a seeded first pass those mandates must not fire, so the spawn prompts explicitly override them:
+
+Spawn team-brainstormer (seeded):
+
+```
+"Spawn a teammate named 'team-brainstormer'.
+
+Teammate prompt:
+'You are team-brainstormer. This is a seeded ADVISORY-check task — it overrides your SKILL.md
+protocol: do not generate approaches, do not evaluate alternatives, do not redesign.
+The check does not gate adoption: you record red flags for coders and reviewers to see;
+the planner adopts the seed regardless.
+Claim the brainstorm task from the task list (metadata.task_type: brainstorm), read
+.bob/state/seed-plan.md and .bob/state/brainstorm-prompt.md, research only enough to
+sanity-check the seed, write the brief context note to .bob/state/brainstorm.md as the
+task describes, mark the task complete, then stay alive for questions from coders and reviewers.
+
+Working directory: [worktree-path]'"
+```
+
+Spawn team-planner (seeded):
+
+```
+"Spawn a teammate named 'team-planner'.
+
+Teammate prompt:
+'You are team-planner. This is a seeded adoption task — it overrides your SKILL.md
+protocol: do not write a new detailed plan, do not rewrite or expand the seed.
+Wait for the plan task to unblock (it is blocked by the brainstorm task). Once unblocked,
+claim it, read .bob/state/seed-plan.md and FIRST verify it enumerates actionable
+implementation tasks; if it does not, report the problem to the team lead and write NO
+plan.md. Only after that check passes, copy .bob/state/seed-plan.md verbatim to
+.bob/state/plan.md. Mark the task complete, then stay alive for questions from coders and reviewers.
+
+Working directory: [worktree-path]'"
+```
+
 **Step 5: Monitor until plan task is complete**
 
 Check progress with `TaskList()` and `agent_status`. **Never use `agent_wait`** — the orchestrator must remain responsive to answer questions at all times.
@@ -507,7 +632,12 @@ agent_status
 - `.bob/state/brainstorm.md` (written by team-brainstormer)
 - `.bob/state/plan.md` (written by team-planner)
 
-**On loop-back (REVIEW → BRAINSTORM):** The knowledge team is still alive. Message team-brainstormer with the review issues and ask it to update brainstorm.md with a new approach. Then message team-planner to update plan.md.
+**On loop-back (REVIEW → BRAINSTORM):** two orchestrator-level paths route back here (the standard path's `/bob:code-review` loops internally and never does). Handle them differently:
+
+- **Incremental path (Phase 6 HIGH/CRITICAL issues — the knowledge team is still alive):** reuse the live team; do NOT respawn. Post the review issues to the existing brainstorm task thread: message team-brainstormer with the issues and ask it to update brainstorm.md with a new approach, then message team-planner to update plan.md.
+- **Adversarial path (post-shutdown — Phase 8 Step 1 has already shut the knowledge team down):** minimal reset: create fresh brainstorm and plan tasks using the normal Step 3 descriptions with the review issues appended (plan blocked by brainstorm, as before), then **respawn** team-brainstormer and team-planner using the normal Step 4 prompts (never the seeded ones): team-brainstormer updates brainstorm.md with a new approach, then team-planner updates plan.md. On this re-entry explicitly skip the seeded Steps 2–3 actions (the staging agent and the seeded task descriptions) — the seed was already consumed; loop-backs never re-seed.
+
+On a seeded run (INIT step 1's latch), seeding is one-shot on both paths: the staged seed at `.bob/state/seed-plan.md` remains available as prior context, but the team now designs the fix itself. On an unseeded run these loop-backs never reference `.bob/state/seed-plan.md` — a stale copy retained by a reused worktree is not context.
 
 ---
 
@@ -518,6 +648,8 @@ agent_status
 **Actions:**
 
 **Step 1: Read plan.md**
+
+**Seeded runs — failed-seed route:** if the adopt task reported that the seed does not enumerate actionable implementation tasks (it writes no `.bob/state/plan.md` in that case), clean up before stopping — the knowledge team is alive, so follow the mandatory cleanup rules (Team Management Best Practices → Cleaning Up): message team-brainstormer and team-planner to shut down, wait for shutdown confirmations, and clean up the team. Then STOP with an error and surface the report to the user. Do not read plan.md and do not create tasks.
 
 ```
 Read(file_path: ".bob/state/plan.md")
