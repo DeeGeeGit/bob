@@ -155,11 +155,11 @@ Coordination:
 - ✅ Create tasks using TaskCreate
 - ✅ Monitor task list with TaskList and agent_status
 - ✅ Message teammates directly
-- ✅ Read `.bob/state/*.md` ONLY to make binary routing decisions (proceed / loop-back)
+- ✅ Read `.bob/state/*.md` ONLY to make binary routing decisions (proceed / loop-back) — with one carve-out: when `commit.md` reports FAILED, the lead may also read its canonical failure details — the `Status:` line, the error line (`ERROR_CODE:` when present, otherwise the generic `ERROR:`), and the output-excerpt lines — in order to surface them
 - ✅ Run `cd` to switch working directory (after WORKTREE phase)
 - ✅ Invoke skills (`/bob:code-review`)
 - ✅ Emit one-line phase transitions to the user
-- ✅ Clean up team when workflow complete
+- ✅ Clean up team at every terminal exit — workflow complete or a FAILED stop
 
 **Team Lead CANNOT:**
 
@@ -169,7 +169,7 @@ Coordination:
 - ❌ Make implementation decisions
 - ❌ Do work that teammates should do
 - ❌ Read or explore the codebase — spawn team-brainstormer for that
-- ❌ Summarize or repeat agent output to the user — just route based on it
+- ❌ Summarize or repeat agent output to the user — just route based on it (one carve-out: on a FAILED publication, present `commit.md`'s status, error line — `ERROR_CODE:` or generic `ERROR:` — and output excerpt verbatim — no summarizing)
 - ❌ Do research, brainstorming, or planning — always done by agents
 
 **All implementation work MUST be performed by teammates.**
@@ -978,7 +978,14 @@ Task(subagent_type: "commit-agent",
              Working directory: [worktree-path]")
 ```
 
-After adversarial review + commit completes, proceed to COMPLETE.
+After the commit-agent completes, read `.bob/state/commit.md` and route on its status — do not assume success:
+
+- Status SUCCESS → proceed to COMPLETE.
+- Status FAILED → **do NOT proceed to COMPLETE**. In order:
+
+  1. **Surface the failure to the user**: present the canonical failure details from `commit.md` verbatim — the status, the error line (`ERROR_CODE:` when present, e.g. `BLOCKED_BY_PRE_PUSH_HOOK`; otherwise the generic `ERROR:` line), and any output excerpt (this read-and-present is the explicit carve-out in Orchestrator Boundaries). If the error is `ERROR_CODE: BLOCKED_BY_PRE_PUSH_HOOK` or `ERROR_CODE: HOOK_STATE_DRIFT`, no push and no PR occurred — both codes are pre-push gate blocks. For any other FAILED, the publication state is whatever the recorded error says — the push may have succeeded with PR creation failing.
+  2. **Run the mandatory team cleanup**: confirm all teammates are shut down (they were messaged to shut down in Step 1 of this phase) and clean up the agent team — the same cleanup COMPLETE performs. A FAILED stop must never leave the team running.
+  3. **Then stop.** A blocked publication must never be reported as a completed workflow.
 
 ---
 
