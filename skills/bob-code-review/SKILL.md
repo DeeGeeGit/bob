@@ -12,16 +12,28 @@ You orchestrate the code review lifecycle: review the current diff, fix issues i
 ## Workflow Diagram
 
 ```
-INIT → REVIEW → ROUTE ──── no issues ──→ COMMIT → MONITOR → COMPLETE
-                  ↑                            ↑
-                  │   issues found             │ CI failures / changes requested
-                  ↓                            └──── NEEDS_BRAINSTORM (exit)
-                 FIX → TEST ─── pass ──────────┘
-                  ↑      │
-                  └──────┘ fail (max 3 loops)
+INIT → REVIEW → ROUTE ── no issues (otherwise) ──→ COMMIT → MONITOR → COMPLETE
+          ↑       │ │    (or MEDIUM/LOW only at loop ≥ 3)      │
+          │       │ │ no issues + verify: lines                │ CI failures / changes requested
+          │       │ │ + TEST not yet run                       └──── NEEDS_BRAINSTORM (exit)
+          │       │ └──────────────────┐
+          │       │ issues found,      │
+          │       │ loop < 3 (loop +1);│
+          │       │ CRITICAL/HIGH at   │
+          │       │ the 3-loop cap     │
+          │       │ → NEEDS_BRAINSTORM │
+          │       ↓                    ↓
+          │      FIX ───────────────→ TEST
+          │       ↑                    │
+          │       │ fail (loop +1,     │ pass — always back to REVIEW
+          │       │ shared counter;    │ (scope + gate state recomputed
+          │       └────────────────────┤ at every REVIEW entry;
+          │         at the 3-loop cap  │ TEST_HAS_RUN latch then routes
+          │         → NEEDS_BRAINSTORM)│ the clean re-review to COMMIT)
+          └────────────────────────────┘
 ```
 
-After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: NEEDS_BRAINSTORM` — the parent workflow re-brainstorms.
+One loop counter is shared by both FIX entries — ROUTE→FIX and TEST-failure→FIX each increment it. After 3 FIX iterations: unresolved CRITICAL/HIGH issues — or still-failing tests — exit with `STATUS: NEEDS_BRAINSTORM` (the parent workflow re-brainstorms); if only MEDIUM/LOW issues remain, ROUTE commits them as acceptable instead of looping again.
 
 ---
 
@@ -33,6 +45,7 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 - ✅ Write `.bob/state/*-prompt.md` instruction files for subagents
 - ✅ Write `.bob/state/code-review-status.md` (exit signal for parent workflow)
 - ✅ Run `git diff --name-only HEAD` or `git status --short` to scope reviews
+- ✅ Resolve the repo root (`git rev-parse --show-toplevel`) and read `.bob/config` there — solely to evaluate ROUTE's `verify:` predicate (`grep '^verify: .'`) and to render the current verification-gate state into REVIEW's scope block
 
 **You NEVER:**
 - ❌ Write or edit source code files
@@ -51,7 +64,7 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 
 ## Phase 1: INIT
 
-**Goal:** Establish context and scope the review.
+**Goal:** Establish initial context and initialize workflow state.
 
 **Actions:**
 
@@ -60,7 +73,7 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
    mkdir -p .bob/state
    ```
 
-2. Get the list of changed files to scope the review:
+2. Get the initial list of changed files (context for the FIX prompts; REVIEW recomputes its own scope at every entry):
    ```bash
    git diff --name-only HEAD
    git status --short
@@ -68,7 +81,9 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 
 3. Initialize loop counter to 0 (track in memory).
 
-4. Move to REVIEW phase.
+4. Initialize `TEST_HAS_RUN` to false (track in memory, same mechanism as the loop counter — it latches whether TEST has run this invocation).
+
+5. Move to REVIEW phase.
 
 ---
 
@@ -78,22 +93,58 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 
 **Actions:**
 
-1. Write `.bob/state/review-prompt.md` with scoping context:
+1. Refresh the changed-file scope. Run this on EVERY entry to this phase — the first pass and every loop-back alike:
+
+   ```bash
+   git diff --name-only HEAD
+   git status --short
+   ```
+
+   Never reuse the list from INIT or from an earlier pass: fixes and verification commands can both change files after INIT (a verification command can even change `.bob/config` itself), and only files in the current scope get reviewed before COMMIT.
+
+   Then read the current verification-gate state straight from the working tree — never from the git output above, which can miss it (`.bob/config` may be untracked or even git-ignored, so a mutation or deletion of it can appear in neither list):
+
+   ```bash
+   ROOT=$(git rev-parse --show-toplevel)
+   grep '^verify: .' "$ROOT/.bob/config"
+   ```
+
+   Capture one of three states for step 2: the matching `verify:` lines verbatim (the active gate), ".bob/config present, no verify: commands — gate inactive", or "no .bob/config present — gate inactive".
+
+2. Write `.bob/state/review-prompt.md` from that fresh list:
 
    ```markdown
    ## Review Scope
 
-   Changed files (from git diff):
-   [list from INIT]
+   Changed files (from the git diff + git status just run):
+   [fresh list from step 1]
 
    Focus review on these files. For unchanged files, only flag issues if
    the changed code introduces a problem in them (e.g., a call site now
    passes wrong types).
 
+   ## Verification Gate (current state, read from the working tree just now)
+
+   [gate state from step 1: the `verify:` lines verbatim, or the explicit
+   gate-inactive marker]
+
+   Evaluate this gate configuration on every pass — it decides what gets
+   verified before COMMIT, so it is always review-relevant, even when git
+   reports no change to it. Judge it on its current content: flag commands
+   that are no-ops (e.g. `verify: true`), suspicious, or plainly too weak
+   to verify the change being committed. An absent or inactive gate is the
+   documented default — never a finding by itself.
+
    Context: [read .bob/state/plan.md and .bob/state/brainstorm.md if they exist]
    ```
 
-2. Spawn both reviewers in parallel using `tasks` mode:
+   The gate block is review input only: ROUTE still evaluates its `verify:` predicate itself when routing. On a repo with no `.bob/config`, the marker line and the predicate change nothing — an initially-clean review still goes straight to COMMIT — while the shared review-loop hardening (scope + gate state recomputed at every REVIEW entry, exclusive loop-cap routing) applies with or without configuration.
+
+   On a loop-back after a green TEST, append the route's focus note AFTER the scope and gate blocks — a focus note narrows the reviewers' attention, never the scope:
+   - After a FIX cycle: note which fixes this re-review verifies (review findings, or test failures on the test-failure variant) so the consolidator focuses on whether they were resolved rather than re-scanning from scratch — while still covering every file in the refreshed scope, including anything a verification command changed (a change to `.bob/config` alters the verification gate itself and is always review-relevant).
+   - Clean route (no findings, TEST just ran): note that this re-review targets what the verification commands changed — the refreshed scope is the review target.
+
+3. Spawn both reviewers in parallel using `tasks` mode:
 
    ```
    subagent({
@@ -112,7 +163,7 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 })
    ```
 
-3. Wait for both agents to complete. Then read **both** `.bob/state/review.md` and `.bob/state/go-presubmit.md` and move to ROUTE.
+4. Wait for both agents to complete. Then read **both** `.bob/state/review.md` and `.bob/state/go-presubmit.md` and move to ROUTE.
 
 ---
 
@@ -130,11 +181,14 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 
 | Situation | Action |
 |-----------|--------|
-| No issues in either report | → COMMIT |
-| MEDIUM/LOW only (across both) | → FIX (loop iteration +1) |
+| No issues in either report, repo defines `verify:` commands (`grep '^verify: .'` on `.bob/config` at repo root matches), and `TEST_HAS_RUN` is false | → TEST (custom verification); a green TEST loops back to REVIEW — which recomputes the changed-file scope and re-reads the current gate state at entry — and `TEST_HAS_RUN` (now true) routes the next clean pass here to COMMIT |
+| No issues in either report (otherwise) | → COMMIT |
+| MEDIUM/LOW only (across both), loop < 3 | → FIX (loop iteration +1) |
+| MEDIUM/LOW only (across both), loop ≥ 3 | → COMMIT (acceptable) |
 | CRITICAL or HIGH present, loop < 3 | → FIX (loop iteration +1) |
 | CRITICAL or HIGH present, loop ≥ 3 | → EXIT with NEEDS_BRAINSTORM |
-| Loop complete, only MEDIUM/LOW remain | → COMMIT (acceptable) |
+
+The rows are mutually exclusive and total: the severity buckets (no issues; MEDIUM/LOW only; any CRITICAL or HIGH) partition the findings, the no-issues bucket splits on the `verify:` + `TEST_HAS_RUN` predicate, and the other two buckets split on the loop counter — exactly one row matches any outcome, so no row can shadow another regardless of match order.
 
 ---
 
@@ -193,6 +247,42 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 
 3. After completion, move to TEST.
 
+**Test-failure variant (clean route):** when FIX is entered from a failed TEST on the clean route, there are no review findings — `.bob/state/review.md` and `.bob/state/go-presubmit.md` are clean. Write `.bob/state/fix-prompt.md` from the test results instead of the template above:
+
+   ```markdown
+   # Fix Test Failures (Iteration [N])
+
+   ## Failures to Fix
+
+   Read .bob/state/test-results.md. There are no review findings on this
+   route — the test results are the sole source of issues. Fix every
+   reported failure (failing verification command, test, or check).
+
+   ## Constraints
+   - Do NOT rewrite code that is not related to a reported failure
+   - Do NOT introduce new functionality
+   - Do NOT change public API unless required to fix a failure
+   - Spec-driven modules: if fixing code in a module with SPECS.md or CLAUDE.md,
+     update those docs if your fix changes a contract or invariant
+
+   ## Changed Files (for context)
+   [list from INIT phase]
+   ```
+
+   Spawn workflow-coder with:
+   ```
+   subagent({
+  agent: "workflow-coder",
+  task: "Fix the failures described in .bob/state/fix-prompt.md.
+                The failures come from .bob/state/test-results.md — do not
+                look for issues in review.md on this route.
+                Write your status to .bob/state/implementation-status.md when done.",
+  context: "fresh"
+})
+   ```
+
+   Then move to TEST as usual.
+
 ---
 
 ## Phase 5: TEST
@@ -211,6 +301,11 @@ subagent({
              determinations. The orchestrator makes routing decisions.
 
              Steps:
+             0. Set ROOT=$(git rev-parse --show-toplevel). If grep '^verify: .' "$ROOT/.bob/config"
+                matches (verify: + space + nonempty command; degenerate lines such as
+                a bare verify: or verify:foo without the space don't count), run
+                exactly those commands serially from the repository root (custom mode,
+                per your SKILL.md Step 0) and skip step 1.
              1. Run `make ci` if available; otherwise run individually:
                 - go test ./...
                 - go test -race ./...
@@ -227,11 +322,9 @@ subagent({
 })
 ```
 
-After completion, read `.bob/state/test-results.md`:
-- If all tests pass → go back to REVIEW (re-review to confirm fixes resolved issues)
-- If tests fail → go back to FIX with test failure details added to fix-prompt.md
-
-When looping back to REVIEW after a successful TEST, update `.bob/state/review-prompt.md` to note this is a re-review after fixes, so the consolidator focuses on whether the issues were resolved (not a full re-scan from scratch).
+After completion, set `TEST_HAS_RUN` to true (in memory — any TEST run this invocation latches it), then read `.bob/state/test-results.md`:
+- If all tests pass → go back to REVIEW, on every route. REVIEW re-enters at its step 1, which recomputes the changed-file scope, re-reads the current verification-gate state from the working tree, and rewrites `.bob/state/review-prompt.md` from both before appending the loop-back focus note — so any files the test or verification commands mutated while exiting 0 land in the re-review, and the gate state that will govern COMMIT is re-reviewed even when a `.bob/config` mutation or deletion is invisible to git (untracked or ignored file). `TEST_HAS_RUN` is now true, so ROUTE sends a clean re-review to COMMIT.
+- If tests fail → go back to FIX with test failure details added to fix-prompt.md, incrementing the loop counter (every TEST-failure→FIX transition increments the same counter ROUTE uses). If the counter is already at the cap (loop ≥ 3), do NOT re-enter FIX — EXIT with NEEDS_BRAINSTORM, surfacing the persistent failures from test-results.md. On the clean route there are no review findings to reference — use Phase 4's test-failure variant of fix-prompt.md instead.
 
 ---
 
@@ -334,6 +427,7 @@ Timestamp: [ISO timestamp]
 - Review iterations: [N]
 - Issues found: [CRITICAL: N, HIGH: N, MEDIUM: N, LOW: N]
 - Issues resolved: [N]
+- Accepted unresolved findings: [none, or each MEDIUM/LOW finding committed as acceptable at the loop cap]
 - PR: [URL from commit.md]
 - CI: [status from monitor.md]
 
@@ -348,7 +442,7 @@ COMPLETE — all checks passing, code reviewed and committed.
 The parent workflow reads `.bob/state/code-review-status.md` to determine routing.
 
 ### COMPLETE
-All issues resolved, commit created, CI passing.
+No blocking findings remain — CRITICAL/HIGH issues resolved; any MEDIUM/LOW findings committed as acceptable at the loop cap are listed in the completion summary. Commit created, CI passing.
 
 ### NEEDS_BRAINSTORM
 Write `.bob/state/code-review-status.md`:
@@ -361,6 +455,7 @@ Timestamp: [ISO timestamp]
 ## Reason
 [One of:]
 - Unresolved CRITICAL/HIGH issues after 3 fix iterations
+- Persistent TEST failures after 3 fix iterations (details from test-results.md)
 - CI failures that indicate a design problem
 - PR reviewer requested architectural changes
 
