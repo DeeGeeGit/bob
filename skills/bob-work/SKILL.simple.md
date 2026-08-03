@@ -155,7 +155,7 @@ Coordination:
 - ✅ Create tasks using TaskCreate
 - ✅ Monitor task list with TaskList and agent_status
 - ✅ Message teammates directly
-- ✅ Read `.bob/state/*.md` ONLY to make binary routing decisions (proceed / loop-back)
+- ✅ Read `.bob/state/*.md` ONLY to make binary routing decisions (proceed / loop-back) — single carve-out: at the confirm-before-push gate the lead reads `.bob/state/commit-preview.md` and `.bob/state/pr-body.md` in full (beyond binary routing) to display them verbatim and to pass the preview's displayed binding fields to the approval writer
 - ✅ Run `cd` to switch working directory (after WORKTREE phase)
 - ✅ Invoke skills (`/bob:code-review`)
 - ✅ Emit one-line phase transitions to the user
@@ -169,7 +169,7 @@ Coordination:
 - ❌ Make implementation decisions
 - ❌ Do work that teammates should do
 - ❌ Read or explore the codebase — spawn team-brainstormer for that
-- ❌ Summarize or repeat agent output to the user — just route based on it
+- ❌ Summarize or repeat agent output to the user — just route based on it (single carve-out: the confirm-before-push gate REQUIRES presenting `.bob/state/commit-preview.md` and `.bob/state/pr-body.md` to the user verbatim before asking for push approval)
 - ❌ Do research, brainstorming, or planning — always done by agents
 
 **All implementation work MUST be performed by teammates.**
@@ -180,7 +180,7 @@ Coordination:
 
 **CRITICAL: The team lead drives forward relentlessly. It does NOT ask for permission.**
 
-The workflow runs autonomously from INIT through COMMIT. The team lead's job is to keep the pipeline moving — spawn teammates, create tasks, monitor progress, route to next phase. No pauses, no confirmations, no "should I continue?" prompts.
+The workflow runs autonomously from INIT through COMMIT. The team lead's job is to keep the pipeline moving — spawn teammates, create tasks, monitor progress, route to next phase. No pauses, no confirmations, no "should I continue?" prompts. Single exception: when `BOB_CONFIRM_BEFORE_PUSH=1`, the commit step pauses once for push approval.
 
 **Auto-routing rules:**
 
@@ -195,7 +195,7 @@ The workflow runs autonomously from INIT through COMMIT. The team lead's job is 
 | Teammate fails with error         | Message teammate to debug/retry            | Only if unresolvable                     |
 | COMPLETE phase (merge PR)         | Confirm with user                          | **Yes — only prompt in entire workflow** |
 
-**The ONLY user prompt in the standard workflow is the final merge confirmation at COMPLETE.**
+**The ONLY user prompt in the standard workflow is the final merge confirmation at COMPLETE** (plus the push-approval prompt when `BOB_CONFIRM_BEFORE_PUSH=1`).
 
 ---
 
@@ -978,7 +978,54 @@ Task(subagent_type: "commit-agent",
              Working directory: [worktree-path]")
 ```
 
-After adversarial review + commit completes, proceed to COMPLETE.
+After the commit-agent completes, read `.bob/state/commit.md` and route on its `STATUS:`:
+
+- `STATUS: SUCCESS` → proceed to COMPLETE.
+- `STATUS: FAILED` → surface the failure to the user and exit FAILED. NEVER proceed to COMPLETE when publication failed.
+- `STATUS: AWAITING_CONFIRMATION` (only when `BOB_CONFIRM_BEFORE_PUSH=1`) → run the confirm gate:
+
+  1. Present `.bob/state/commit-preview.md` AND `.bob/state/pr-body.md` (the exact PR body bytes) to the user verbatim (REQUIRED — an explicit boundary carve-out, as is reading these two files beyond binary routing). The preview's seven binding-field lines (`BRANCH`, `HEAD`, `REPO`, `BASE`, `REMOTE_FINGERPRINT`, `BODY_SHA256`, `TITLE`) as displayed here are the snapshot the approval binds. Then ask exactly: `Push this branch and create the PR? [push / stop]` (required prompt; overrides autonomy rules).
+
+  2. On **push**: the team lead cannot write files — spawn a Bash agent to write the approval, and wait for it to complete. The approval must bind the DISPLAYED snapshot, not whatever the state files say later: substitute the seven binding-field values exactly as displayed in step 1 into the writer prompt as literals. The writer copies them verbatim and never re-reads the live preview — the publish pass revalidates every field against live state and fails closed on any post-display drift:
+
+     ```
+     Task(subagent_type: "Bash",
+          description: "Write push approval",
+          run_in_background: true,
+          prompt: "Write the file .bob/state/push-approval.md containing EXACTLY
+                  these eight lines and nothing else:
+                  APPROVED: yes
+                  BRANCH: [displayed BRANCH]
+                  HEAD: [displayed HEAD]
+                  REPO: [displayed REPO]
+                  BASE: [displayed BASE]
+                  REMOTE_FINGERPRINT: [displayed REMOTE_FINGERPRINT]
+                  BODY_SHA256: [displayed BODY_SHA256]
+                  TITLE: [displayed TITLE]
+                  These are literals from the preview the user just approved —
+                  do NOT re-read .bob/state/commit-preview.md or recompute
+                  anything; the approval must record the approved snapshot, and
+                  the publish pass validates live state against it.
+                  Working directory: [worktree-path]")
+     ```
+
+     When the writer completes, re-spawn the commit-agent for the publish pass (do NOT reuse the generic commit task text above — it says to create a commit, which conflicts with the publish pass):
+
+     ```
+     Task(subagent_type: "commit-agent",
+          description: "Publish approved commit",
+          run_in_background: true,
+          prompt: "Validate approval and publish the existing HEAD — do NOT create a commit.
+                  If .bob/state/push-approval.md is missing, fail — never publish without it.
+                  Write status to .bob/state/commit.md.
+                  Working directory: [worktree-path]")
+     ```
+
+     Then read `.bob/state/commit.md` again and route on it with the same rules: SUCCESS → COMPLETE; FAILED (including `ERROR_CODE: APPROVAL_MISMATCH`) → surface the failure and exit FAILED — never COMPLETE; a fresh `AWAITING_CONFIRMATION` (e.g. the approval write failed and the PREPARE pass regenerated the preview) re-enters this gate at step 1.
+
+  3. On **stop**: exit FAILED — report "user declined push — work preserved on branch [branch], local commit [sha]", clean up the team, and end the workflow without entering COMPLETE (no merge prompt).
+
+After adversarial review + commit completes with `STATUS: SUCCESS`, proceed to COMPLETE.
 
 ---
 

@@ -155,7 +155,7 @@ based solely on severity distribution, not subjective judgment.
 
 **CRITICAL: The orchestrator drives forward relentlessly. It does NOT ask for permission.**
 
-The workflow runs autonomously from INIT through COMMIT. The orchestrator's job is to keep the pipeline moving — spawn an agent, read the result, route to the next phase, repeat. No pauses, no confirmations, no "should I continue?" prompts.
+The workflow runs autonomously from INIT through COMMIT. The orchestrator's job is to keep the pipeline moving — spawn an agent, read the result, route to the next phase, repeat. No pauses, no confirmations, no "should I continue?" prompts. Single exception: when `BOB_CONFIRM_BEFORE_PUSH=1`, the commit step pauses once for push approval.
 
 **Auto-routing rules (inspired by GSD deviation handling):**
 
@@ -169,7 +169,7 @@ The workflow runs autonomously from INIT through COMMIT. The orchestrator's job 
 | Agent fails with error | Retry once automatically | Only if retry also fails |
 | COMPLETE phase (merge PR) | Confirm with user | **Yes — only prompt in entire workflow** |
 
-**The ONLY user prompt in the standard workflow is the final merge confirmation at COMPLETE.**
+**The ONLY user prompt in the standard workflow is the final merge confirmation at COMPLETE** (plus the push-approval prompt when `BOB_CONFIRM_BEFORE_PUSH=1`).
 
 Everything else is automatic. The orchestrator logs brief status lines so the user can follow along, but never stops to ask. If something fails, it retries or loops back per the routing rules. If a loop-back is needed, it explains what happened and immediately continues.
 

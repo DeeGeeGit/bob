@@ -32,6 +32,7 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 - ✅ Read `.bob/state/*.md` files to make routing decisions
 - ✅ Write `.bob/state/*-prompt.md` instruction files for subagents
 - ✅ Write `.bob/state/code-review-status.md` (exit signal for parent workflow)
+- ✅ Write `.bob/state/push-approval.md` (confirm-before-push approval — only at the COMMIT phase CONFIRM step, when `BOB_CONFIRM_BEFORE_PUSH=1` and the user answered push)
 - ✅ Run `git diff --name-only HEAD` or `git status --short` to scope reviews
 
 **You NEVER:**
@@ -39,7 +40,7 @@ After 3 FIX iterations with unresolved CRITICAL/HIGH issues, exit with `STATUS: 
 - ❌ Run `git commit`, `git push`, `gh pr create`
 - ❌ Run tests, linters, or build commands
 - ❌ Make implementation or architectural decisions
-- ❌ Ask the user permission to proceed (run autonomously until COMPLETE)
+- ❌ Ask the user permission to proceed (run autonomously until COMPLETE) — single exception: the confirm-before-push prompt in COMMIT when `BOB_CONFIRM_BEFORE_PUSH=1`
 
 ---
 
@@ -271,7 +272,29 @@ When looping back to REVIEW after a successful TEST, update `.bob/state/review-p
 
 3. After completion, read `.bob/state/commit.md`:
    - STATUS: SUCCESS → move to MONITOR
+   - STATUS: AWAITING_CONFIRMATION (confirm-before-push mode) → step 4 below
    - STATUS: FAILED → report failure and exit with STATUS: FAILED
+
+4. CONFIRM (reached only when `BOB_CONFIRM_BEFORE_PUSH=1`): present `.bob/state/commit-preview.md` AND `.bob/state/pr-body.md` (the exact PR body bytes) to the user verbatim — branch, HEAD, repo, base, redacted push destination, diffstat, commit message, PR title, and the full PR body — then ask exactly:
+
+   `Push this branch and create the PR? [push / stop]`
+
+   This prompt is REQUIRED here — it overrides every autonomy rule.
+   - On **push**: write `.bob/state/push-approval.md` containing `APPROVED: yes` plus the seven binding-field lines (`BRANCH`, `HEAD`, `REPO`, `BASE`, `REMOTE_FINGERPRINT`, `BODY_SHA256`, `TITLE`) copied verbatim from the preview as displayed. Then respawn commit-agent for the publish pass — do NOT reuse step 2's generic task text (it says to create a commit, which conflicts with the publish pass):
+
+     ```
+     subagent({
+  agent: "commit-agent",
+  task: "Validate approval and publish the existing HEAD — do NOT create a commit.
+                If .bob/state/push-approval.md is missing, fail — never publish without it.
+                Read .bob/state/commit-prompt.md for context.
+                Write status to .bob/state/commit.md.",
+  context: "fresh"
+})
+     ```
+
+     Then read `.bob/state/commit.md` and route on it as in step 3: SUCCESS → MONITOR; FAILED (including `ERROR_CODE: APPROVAL_MISMATCH`) → report failure and exit with STATUS: FAILED; a fresh AWAITING_CONFIRMATION re-enters this step. Never continue as if published when the publish pass failed.
+   - On **stop**: exit with STATUS: FAILED, reason: "user declined push — work preserved on branch [branch], local commit [sha]".
 
 ---
 
@@ -400,6 +423,9 @@ Timestamp: [ISO timestamp]
 | `.bob/state/test-results.md` | workflow-tester | Test run results |
 | `.bob/state/commit-prompt.md` | Orchestrator | Commit instructions |
 | `.bob/state/commit.md` | commit-agent | Commit/PR status |
+| `.bob/state/commit-preview.md` | commit-agent | Confirm-before-push preview (binding fields: branch, HEAD, repo, base, remote fingerprint, body hash, title) |
+| `.bob/state/pr-body.md` | commit-agent | Confirm-before-push exact PR body bytes (handed to `gh pr create --body-file`) |
+| `.bob/state/push-approval.md` | Orchestrator | Confirm-before-push approval (single-use; revalidated and deleted by commit-agent) |
 | `.bob/state/monitor-prompt.md` | Orchestrator | Monitor instructions |
 | `.bob/state/monitor.md` | monitor-agent | CI/PR status |
 | `.bob/state/code-review-status.md` | Orchestrator | Exit signal for parent |

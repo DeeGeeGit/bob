@@ -3,7 +3,7 @@
 
 SPEC ?= full
 
-.PHONY: help all install install-skills install-agents install-lsp install-guidance install-statusline install-worktree install-personality install-plugins allow hooks enable-agent-teams resolve-copilot ci clean install-no-python install-engram install-pi
+.PHONY: help all install install-skills install-agents install-lsp install-guidance install-statusline install-worktree install-personality install-plugins allow hooks enable-agent-teams enable-confirm-push resolve-copilot ci clean install-no-python install-engram install-pi
 
 all: install install-statusline install-worktree allow enable-agent-teams hooks install-engram
 	@echo ""
@@ -31,6 +31,7 @@ help:
 	@echo "                                  Options: default, pirate, cartoon_pirate (default: no override)"
 	@echo "  make allow                    - Apply permissions from config/claude-permissions.json"
 	@echo "  make enable-agent-teams       - Enable experimental agent teams feature"
+	@echo "  make enable-confirm-push      - Pause commit-agent runs for approval before push/PR creation"
 	@echo "  make hooks                    - [OPTIONAL] Install pre-commit hooks (tests, linting, formatting)"
 	@echo "  make ci                       - Run full CI pipeline locally (tests, lint, fmt, race, GHA)"
 	@echo "  make resolve-copilot PR=<url> - Resolve Copilot review comments and re-request review"
@@ -475,6 +476,63 @@ allow:
 	@jq -r '.permissions.allow[]' "$$HOME/.claude/settings.json" | sed 's/^/  ✓ /'
 	@echo ""
 	@echo "Default mode: $$(jq -r '.permissions.defaultMode' "$$HOME/.claude/settings.json")"
+
+# Enable confirm-before-push mode (bob pauses for approval before push/PR creation)
+enable-confirm-push:
+	@echo "🔒 Enabling confirm-before-push mode..."
+	@if ! command -v jq >/dev/null 2>&1; then \
+		echo "❌ Error: jq is required but not installed"; \
+		echo "Install with: sudo apt-get install jq  (or your package manager)"; \
+		exit 1; \
+	fi
+	@SETTINGS_FILE="$$HOME/.claude/settings.json"; \
+	if ! TMP_FILE=$$(umask 077; mktemp "$$SETTINGS_FILE.confirm-push.XXXXXX"); then \
+		echo "❌ Failed to create temp file beside settings.json — prior state unchanged"; \
+		exit 1; \
+	fi; \
+	if [ -f "$$SETTINGS_FILE" ]; then \
+		JQ_OK=0; jq '.env.BOB_CONFIRM_BEFORE_PUSH = "1"' "$$SETTINGS_FILE" > "$$TMP_FILE" && JQ_OK=1; \
+	else \
+		JQ_OK=0; jq -n '.env.BOB_CONFIRM_BEFORE_PUSH = "1"' > "$$TMP_FILE" && JQ_OK=1; \
+	fi; \
+	if [ "$$JQ_OK" -ne 1 ]; then \
+		echo "❌ Failed to build updated settings (jq step failed) — prior state unchanged"; \
+		rm -f "$$TMP_FILE"; \
+		exit 1; \
+	fi; \
+	if [ -f "$$SETTINGS_FILE" ]; then \
+		if ! cp "$$SETTINGS_FILE" "$$SETTINGS_FILE.backup"; then \
+			echo "❌ Failed to back up existing settings — settings unchanged"; \
+			rm -f "$$TMP_FILE"; \
+			exit 1; \
+		fi; \
+		echo "✅ Backup saved to ~/.claude/settings.json.backup"; \
+		if ! ORIG_MODE=$$(stat -Lc '%a' "$$SETTINGS_FILE" 2>/dev/null || stat -Lf '%Lp' "$$SETTINGS_FILE" 2>/dev/null); then \
+			echo "❌ Failed to read original settings file mode (stat failed) — settings unchanged"; \
+			rm -f "$$TMP_FILE"; \
+			exit 1; \
+		fi; \
+		if ! chmod "$$ORIG_MODE" "$$TMP_FILE"; then \
+			echo "❌ Failed to preserve settings file mode (chmod failed) — settings unchanged"; \
+			rm -f "$$TMP_FILE"; \
+			exit 1; \
+		fi; \
+	fi; \
+	if mv "$$TMP_FILE" "$$SETTINGS_FILE"; then \
+		echo "✅ Confirm-before-push enabled (BOB_CONFIRM_BEFORE_PUSH=1)"; \
+	else \
+		echo "❌ Failed to install updated settings (mv step failed) — settings unchanged"; \
+		rm -f "$$TMP_FILE"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "Note: pi reads exported environment variables, not settings.json —"
+	@echo "      for pi, export BOB_CONFIRM_BEFORE_PUSH=1 in your shell instead."
+	@echo "Scope: gates the commit-agent publication path (/bob:work variants,"
+	@echo "      /bob:code-review). bob-stage-prs also spawns commit-agent, so the"
+	@echo "      gate may partially intercept its commit/PR steps; bob-operational's"
+	@echo "      direct pushes are not gated."
+	@echo "🔄 Restart Claude Code for changes to take effect"
 
 # Enable experimental agent teams feature
 enable-agent-teams:

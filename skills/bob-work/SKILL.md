@@ -29,7 +29,7 @@ REVIEW is internal to `/bob:code-review` (review → fix → test → commit →
 
 **You CANNOT:** write source files, run git commands, run tests, make implementation decisions.
 
-**Routing:** autonomous throughout. Only prompt the user at COMPLETE for merge confirmation.
+**Routing:** autonomous throughout. Only prompt the user at COMPLETE for merge confirmation. (When `BOB_CONFIRM_BEFORE_PUSH=1`, `/bob:code-review` additionally pauses once for push approval — allow that prompt.)
 
 **Status lines only — no file summaries:**
 ```
