@@ -100,6 +100,26 @@ REVIEW is mandatory — it cannot be skipped even if tests pass.
 | team-reviewer | REVIEW | Concurrent reviewer teammate |
 | Explore | DISCOVER | Codebase exploration |
 
+## Per-Repo Verification Commands
+
+By default the TEST phases run bob's Go toolchain (`make ci`, or `go test`/`go fmt`/`golangci-lint`/`gocyclo` individually). Repos in other languages can override this with a `.bob/config` file at the repository root containing one `verify:` line per command:
+
+```
+verify: pnpm install --frozen-lockfile
+verify: pnpm test
+verify: pnpm exec tsc --noEmit
+```
+
+A line counts only if it starts with `verify: ` (colon + space) and has a nonempty command after it; degenerate lines (a bare `verify:`, or `verify:foo` with no space) are ignored. Commands run exactly as written, serially, from the repository root; any nonzero exit fails verification; when `verify:` lines exist the default Go steps are skipped. Activation is presence-based: the tester reads the file from the working tree on every run, whether or not it is committed.
+
+To commit the file in a repo that ignores `.bob` paths: `!.bob/config` works only when it comes after a `.bob/*` rule. If the directory itself is ignored (`.bob/`), git never descends into it, so re-include the parent first:
+
+```
+!.bob/
+.bob/*
+!.bob/config
+```
+
 ## Git Worktrees
 
 All work workflows create isolated git worktrees before any file operations:
