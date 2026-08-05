@@ -42,6 +42,17 @@ make install
 
 This installs workflow skills to `~/.claude/skills/` and subagents to `~/.claude/agents/`. Restart Claude Code after installation.
 
+For a lightweight mode that keeps the workflow skills but does not spawn subagents,
+install with `SPEC=simple`:
+
+```bash
+make install SPEC=simple
+```
+
+This includes a single-reviewer `/bob:adversarial-review` that writes its findings
+to `.bob/state/review.md`. The same option applies to the Pi, Codex, and wllr
+install targets.
+
 ## Workflows
 
 ### `/bob:work` — Concurrent Agent Team Workflow
