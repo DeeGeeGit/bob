@@ -63,15 +63,17 @@ install-skills:
 	@echo "📚 Installing Bob workflow skills..."
 	@SKILLS_DIR="$$HOME/.claude/skills"; \
 	mkdir -p "$$SKILLS_DIR"; \
+	VARIANTS="normal simple"; [ "$(SPEC)" = "simple" ] && VARIANTS="simple"; \
 	for skill in bob-work bob-work-agents bob-work-teams bob-explore bob-explore-teams bob-audit bob-code-review bob-cleanup bob-cleanup-teams bob-design bob-generate-overview bob-generate-feature-page bob-generate-okf bob-stage-prs bob-adversarial-review bob-postmortem bob-premortem bob-challenge-idea bob-operational bob-internal-brainstorming bob-internal-writing-plans bob-internal-go-coding; do \
 		if [ -d "skills/$$skill" ]; then \
-			echo "   Installing $$skill skill..."; \
-			mkdir -p "$$SKILLS_DIR/$$skill"; \
-			if [ "$(SPEC)" = "simple" ] && [ -f "skills/$$skill/SKILL.simple.md" ]; then \
-				cp "skills/$$skill/SKILL.simple.md" "$$SKILLS_DIR/$$skill/SKILL.md"; \
-			else \
-				cp "skills/$$skill/SKILL.md" "$$SKILLS_DIR/$$skill/SKILL.md"; \
-			fi; \
+			for variant in $$VARIANTS; do \
+				SRC="skills/$$skill/SKILL.md"; SUFFIX=""; \
+				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
+				[ -f "$$SRC" ] || continue; \
+				DEST="$$skill$$SUFFIX"; echo "   Installing $$DEST skill..."; \
+				mkdir -p "$$SKILLS_DIR/$$DEST"; \
+				sed "s/^name: .*/name: $$DEST/" "$$SRC" > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			done; \
 		else \
 			echo "   ⚠️  Skill $$skill not found, skipping..."; \
 		fi; \
@@ -776,21 +778,18 @@ install-pi:
 	@PI_TRANSFORM='s/subagent_type:/agent:/g; s/run_in_background: true/background: true/g; s/taskId:/id:/g; s/status: "completed"/status: "done"/g'; \
 	SKILLS_DIR="$$HOME/.pi/agent/skills"; \
 	mkdir -p "$$SKILLS_DIR"; \
+	VARIANTS="normal simple"; [ "$(SPEC)" = "simple" ] && VARIANTS="simple"; \
 	for skill in bob-work bob-work-agents bob-work-teams bob-explore bob-explore-teams bob-audit bob-code-review bob-cleanup bob-cleanup-teams bob-design bob-generate-overview bob-generate-feature-page bob-generate-okf bob-stage-prs bob-adversarial-review bob-postmortem bob-premortem bob-challenge-idea bob-operational bob-internal-brainstorming bob-internal-writing-plans bob-internal-go-coding; do \
 		if [ -d "skills/$$skill" ]; then \
-			if [ "$(SPEC)" = "simple" ] && [ -f "skills/$$skill/SKILL.simple.md" ]; then \
-				SRC="skills/$$skill/SKILL.simple.md"; \
-			elif [ -f "skills/$$skill/SKILL.pi.md" ]; then \
-				SRC="skills/$$skill/SKILL.pi.md"; \
-			else \
-				SRC="skills/$$skill/SKILL.md"; \
-			fi; \
-			RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//'); \
-			DEST=$$(echo "$$RAW" | tr ':' '-'); \
-			[ -z "$$DEST" ] && DEST="$$skill"; \
-			echo "   Installing $$DEST..."; \
-			mkdir -p "$$SKILLS_DIR/$$DEST"; \
-			sed "s/^name: .*/name: $$DEST/; $$PI_TRANSFORM" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			for variant in $$VARIANTS; do \
+				SRC="skills/$$skill/SKILL.pi.md"; SUFFIX=""; \
+				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
+				[ -f "$$SRC" ] || SRC="skills/$$skill/SKILL.md"; [ -f "$$SRC" ] || continue; \
+				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//'); DEST=$$(echo "$$RAW" | tr ':' '-'); \
+				[ -z "$$DEST" ] && DEST="$$skill"; DEST="$$DEST$$SUFFIX"; echo "   Installing $$DEST..."; \
+				mkdir -p "$$SKILLS_DIR/$$DEST"; \
+				sed "s/^name: .*/name: $$DEST/; $$PI_TRANSFORM" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			done; \
 		else \
 			echo "   ⚠️  Skill $$skill not found, skipping..."; \
 		fi; \
@@ -887,21 +886,18 @@ install-pi-skills:
 	@PI_TRANSFORM='s/subagent_type:/agent:/g; s/run_in_background: true/background: true/g; s/taskId:/id:/g; s/status: "completed"/status: "done"/g'; \
 	SKILLS_DIR="$$HOME/.pi/agent/skills"; \
 	mkdir -p "$$SKILLS_DIR"; \
+	VARIANTS="normal simple"; [ "$(SPEC)" = "simple" ] && VARIANTS="simple"; \
 	for skill in bob-work bob-work-agents bob-work-teams bob-explore bob-explore-teams bob-audit bob-code-review bob-cleanup bob-cleanup-teams bob-design bob-generate-overview bob-generate-feature-page bob-generate-okf bob-stage-prs bob-adversarial-review bob-postmortem bob-premortem bob-challenge-idea bob-operational bob-internal-brainstorming bob-internal-writing-plans bob-internal-go-coding; do \
 		if [ -d "skills/$$skill" ]; then \
-			if [ "$(SPEC)" = "simple" ] && [ -f "skills/$$skill/SKILL.simple.md" ]; then \
-				SRC="skills/$$skill/SKILL.simple.md"; \
-			elif [ -f "skills/$$skill/SKILL.pi.md" ]; then \
-				SRC="skills/$$skill/SKILL.pi.md"; \
-			else \
-				SRC="skills/$$skill/SKILL.md"; \
-			fi; \
-			RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//'); \
-			DEST=$$(echo "$$RAW" | tr ':' '-'); \
-			[ -z "$$DEST" ] && DEST="$$skill"; \
-			echo "   Installing $$DEST..."; \
-			mkdir -p "$$SKILLS_DIR/$$DEST"; \
-			sed "s/^name: .*/name: $$DEST/; $$PI_TRANSFORM" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			for variant in $$VARIANTS; do \
+				SRC="skills/$$skill/SKILL.pi.md"; SUFFIX=""; \
+				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
+				[ -f "$$SRC" ] || SRC="skills/$$skill/SKILL.md"; [ -f "$$SRC" ] || continue; \
+				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//'); DEST=$$(echo "$$RAW" | tr ':' '-'); \
+				[ -z "$$DEST" ] && DEST="$$skill"; DEST="$$DEST$$SUFFIX"; echo "   Installing $$DEST..."; \
+				mkdir -p "$$SKILLS_DIR/$$DEST"; \
+				sed "s/^name: .*/name: $$DEST/; $$PI_TRANSFORM" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			done; \
 		else \
 			echo "   ⚠️  Skill $$skill not found, skipping..."; \
 		fi; \
@@ -941,15 +937,17 @@ install-codex-skills:
 	@echo "📚 Installing Bob skills for Codex..."
 	@SKILLS_DIR="$(CODEX_HOME)/skills"; \
 	mkdir -p "$$SKILLS_DIR"; \
+	VARIANTS="normal simple"; [ "$(SPEC)" = "simple" ] && VARIANTS="simple"; \
 	for skill in bob-work bob-work-agents bob-work-teams bob-explore bob-explore-teams bob-audit bob-code-review bob-cleanup bob-cleanup-teams bob-design bob-generate-overview bob-generate-feature-page bob-generate-okf bob-stage-prs bob-adversarial-review bob-postmortem bob-premortem bob-challenge-idea bob-operational bob-internal-brainstorming bob-internal-writing-plans bob-internal-go-coding; do \
 		if [ -d "skills/$$skill" ]; then \
-			if [ "$(SPEC)" = "simple" ] && [ -f "skills/$$skill/SKILL.simple.md" ]; then SRC="skills/$$skill/SKILL.simple.md"; \
-			elif [ -f "skills/$$skill/SKILL.codex.md" ]; then SRC="skills/$$skill/SKILL.codex.md"; \
-			else SRC="skills/$$skill/SKILL.md"; fi; \
-			RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//; s/^"//; s/"$$//'); \
-			DEST=$$(echo "$$RAW" | tr ':' '-'); [ -z "$$DEST" ] && DEST="$$skill"; \
-			echo "   Installing $$DEST..."; mkdir -p "$$SKILLS_DIR/$$DEST"; \
-			sed "s/^name: .*/name: $$DEST/" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			for variant in $$VARIANTS; do \
+				SRC="skills/$$skill/SKILL.codex.md"; SUFFIX=""; \
+				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
+				[ -f "$$SRC" ] || SRC="skills/$$skill/SKILL.md"; [ -f "$$SRC" ] || continue; \
+				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//; s/^"//; s/"$$//'); DEST=$$(echo "$$RAW" | tr ':' '-'); \
+				[ -z "$$DEST" ] && DEST="$$skill"; DEST="$$DEST$$SUFFIX"; echo "   Installing $$DEST..."; mkdir -p "$$SKILLS_DIR/$$DEST"; \
+				sed "s/^name: .*/name: $$DEST/" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			done; \
 		fi; \
 	done; \
 	if [ -f "skills/bob-version/SKILL.md.template" ]; then \
@@ -965,21 +963,19 @@ install-wllr install-wllr-skills:
 	@echo "📚 Installing Bob skills for wllr..."
 	@SKILLS_DIR="$(WLLR_HOME)/skills"; \
 	mkdir -p "$$SKILLS_DIR"; \
+	VARIANTS="normal simple"; [ "$(SPEC)" = "simple" ] && VARIANTS="simple"; \
 	for skill in bob-work bob-work-agents bob-work-teams bob-explore bob-explore-teams bob-audit bob-code-review bob-cleanup bob-cleanup-teams bob-design bob-generate-overview bob-generate-feature-page bob-generate-okf bob-stage-prs bob-adversarial-review bob-postmortem bob-premortem bob-challenge-idea bob-operational bob-internal-brainstorming bob-internal-writing-plans bob-internal-go-coding; do \
 		if [ -d "skills/$$skill" ]; then \
-			if [ "$(SPEC)" = "simple" ] && [ -f "skills/$$skill/SKILL.simple.md" ]; then \
-				SRC="skills/$$skill/SKILL.simple.md"; \
-			else \
-				SRC="skills/$$skill/SKILL.md"; \
-			fi; \
-			RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//; s/^"//; s/"$$//'); \
-			CMD="$$RAW"; \
-			case "$$CMD" in bob-internal-*) CMD="bob:internal:$${CMD#bob-internal-}" ;; bob-*) CMD="bob:$${CMD#bob-}" ;; esac; \
-			DEST=$$(echo "$$CMD" | tr ':' '-'); \
-			[ -z "$$DEST" ] && DEST="$$skill"; \
-			echo "   Installing $$CMD skill..."; \
-			mkdir -p "$$SKILLS_DIR/$$DEST"; \
-			sed "s/^name: .*/name: $$CMD/" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			for variant in $$VARIANTS; do \
+				SRC="skills/$$skill/SKILL.md"; SUFFIX=""; \
+				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
+				[ -f "$$SRC" ] || continue; \
+				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//; s/^"//; s/"$$//'); CMD="$$RAW"; \
+				case "$$CMD" in bob-internal-*) CMD="bob:internal:$${CMD#bob-internal-}" ;; bob-*) CMD="bob:$${CMD#bob-}" ;; esac; \
+				CMD="$$CMD$$SUFFIX"; DEST=$$(echo "$$CMD" | tr ':' '-'); [ -z "$$DEST" ] && DEST="$$skill$$SUFFIX"; \
+				echo "   Installing $$CMD skill..."; mkdir -p "$$SKILLS_DIR/$$DEST"; \
+				sed "s/^name: .*/name: $$CMD/" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
+			done; \
 		else \
 			echo "   ⚠️  Skill $$skill not found, skipping..."; \
 		fi; \

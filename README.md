@@ -42,15 +42,17 @@ make install
 
 This installs workflow skills to `~/.claude/skills/` and subagents to `~/.claude/agents/`. Restart Claude Code after installation.
 
-For a lightweight mode that keeps the workflow skills but does not spawn subagents,
-install with `SPEC=simple`:
+The default install publishes both normal skills and lightweight `-simple` siblings.
+The simple variants do not spawn subagents. To install only the simple variants,
+use `SPEC=simple`:
 
 ```bash
 make install SPEC=simple
 ```
 
-This includes a single-reviewer `/bob:adversarial-review` that writes its findings
-to `.bob/state/review.md`. The same option applies to the Pi, Codex, and wllr
+For example, this provides both `/bob:adversarial-review` and
+`/bob:adversarial-review-simple`; the simple reviewer writes findings to
+`.bob/state/review.md`. The same naming applies to the Pi, Codex, and wllr
 install targets.
 
 ## Workflows
