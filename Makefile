@@ -784,7 +784,7 @@ install-pi:
 			for variant in $$VARIANTS; do \
 				SRC="skills/$$skill/SKILL.pi.md"; SUFFIX=""; \
 				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
-				[ -f "$$SRC" ] || SRC="skills/$$skill/SKILL.md"; [ -f "$$SRC" ] || continue; \
+				if [ "$$variant" = "normal" ] && [ ! -f "$$SRC" ]; then SRC="skills/$$skill/SKILL.md"; fi; [ -f "$$SRC" ] || continue; \
 				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//'); DEST=$$(echo "$$RAW" | tr ':' '-'); \
 				[ -z "$$DEST" ] && DEST="$$skill"; DEST="$$DEST$$SUFFIX"; echo "   Installing $$DEST..."; \
 				mkdir -p "$$SKILLS_DIR/$$DEST"; \
@@ -892,7 +892,7 @@ install-pi-skills:
 			for variant in $$VARIANTS; do \
 				SRC="skills/$$skill/SKILL.pi.md"; SUFFIX=""; \
 				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
-				[ -f "$$SRC" ] || SRC="skills/$$skill/SKILL.md"; [ -f "$$SRC" ] || continue; \
+				if [ "$$variant" = "normal" ] && [ ! -f "$$SRC" ]; then SRC="skills/$$skill/SKILL.md"; fi; [ -f "$$SRC" ] || continue; \
 				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//'); DEST=$$(echo "$$RAW" | tr ':' '-'); \
 				[ -z "$$DEST" ] && DEST="$$skill"; DEST="$$DEST$$SUFFIX"; echo "   Installing $$DEST..."; \
 				mkdir -p "$$SKILLS_DIR/$$DEST"; \
@@ -943,7 +943,7 @@ install-codex-skills:
 			for variant in $$VARIANTS; do \
 				SRC="skills/$$skill/SKILL.codex.md"; SUFFIX=""; \
 				if [ "$$variant" = "simple" ]; then SRC="skills/$$skill/SKILL.simple.md"; SUFFIX="-simple"; fi; \
-				[ -f "$$SRC" ] || SRC="skills/$$skill/SKILL.md"; [ -f "$$SRC" ] || continue; \
+				if [ "$$variant" = "normal" ] && [ ! -f "$$SRC" ]; then SRC="skills/$$skill/SKILL.md"; fi; [ -f "$$SRC" ] || continue; \
 				RAW=$$(grep -m1 '^name:' "$$SRC" | sed 's/^name: *//; s/^"//; s/"$$//'); DEST=$$(echo "$$RAW" | tr ':' '-'); \
 				[ -z "$$DEST" ] && DEST="$$skill"; DEST="$$DEST$$SUFFIX"; echo "   Installing $$DEST..."; mkdir -p "$$SKILLS_DIR/$$DEST"; \
 				sed "s/^name: .*/name: $$DEST/" "$$SRC" | bash scripts/sanitize-native-team-skill.sh > "$$SKILLS_DIR/$$DEST/SKILL.md"; \
