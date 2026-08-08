@@ -42,6 +42,21 @@ make install
 
 This installs workflow skills to `~/.claude/skills/` and subagents to `~/.claude/agents/`. Restart Claude Code after installation.
 
+The default install publishes both normal skills and `-simple` siblings. These
+simple files are alternate workflow specifications; they may still use agents when
+their workflow requires them. The `bob-adversarial-review-simple` variant is the
+exception: it is explicitly a single-reviewer, no-subagent review. To install only
+the simple variants, use `SPEC=simple`:
+
+```bash
+make install SPEC=simple
+```
+
+For example, this provides both `/bob:adversarial-review` and
+`/bob:adversarial-review-simple`; the latter writes findings to
+`.bob/state/review.md` without spawning subagents. The same naming applies to the
+Pi, Codex, and wllr install targets.
+
 ## Workflows
 
 ### `/bob:work` — Concurrent Agent Team Workflow
@@ -99,6 +114,26 @@ REVIEW is mandatory — it cannot be skipped even if tests pass.
 | team-coder | EXECUTE | Concurrent coder teammate |
 | team-reviewer | REVIEW | Concurrent reviewer teammate |
 | Explore | DISCOVER | Codebase exploration |
+
+## Per-Repo Verification Commands
+
+By default the TEST phases run bob's Go toolchain (`make ci`, or `go test`/`go fmt`/`golangci-lint`/`gocyclo` individually). Repos in other languages can override this with a `.bob/config` file at the repository root containing one `verify:` line per command:
+
+```
+verify: pnpm install --frozen-lockfile
+verify: pnpm test
+verify: pnpm exec tsc --noEmit
+```
+
+A line counts only if it starts with `verify: ` (colon + space) and has a nonempty command after it; degenerate lines (a bare `verify:`, or `verify:foo` with no space) are ignored. Commands run exactly as written, serially, from the repository root; any nonzero exit fails verification; when `verify:` lines exist the default Go steps are skipped. Activation is presence-based: the tester reads the file from the working tree on every run, whether or not it is committed.
+
+To commit the file in a repo that ignores `.bob` paths: `!.bob/config` works only when it comes after a `.bob/*` rule. If the directory itself is ignored (`.bob/`), git never descends into it, so re-include the parent first:
+
+```
+!.bob/
+.bob/*
+!.bob/config
+```
 
 ## Git Worktrees
 

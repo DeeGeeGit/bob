@@ -32,6 +32,26 @@ When spawned by a workflow skill, you:
 
 ## Testing Process
 
+### Step 0: Repo-provided verification commands (custom mode)
+
+Before anything else, resolve the repository root and check for repo-provided verification commands:
+
+```bash
+ROOT=$(git rev-parse --show-toplevel)
+grep '^verify: .' "$ROOT/.bob/config" 2>/dev/null
+```
+
+If that grep matches one or more lines, **custom mode is active**. The grammar is line-oriented: a line defines a command only if it starts with `verify: ` (colon + space) and has a nonempty remainder; everything after `verify: ` is one command, run verbatim from the repository root; order matters; there is no other quoting or expansion semantics beyond the shell's own. Degenerate lines — a bare `verify:` with nothing after it, or `verify:foo` with no space — are not verification commands; ignore them.
+
+In custom mode:
+
+- Run EXACTLY the configured commands, serially, from `$ROOT`.
+- Record every command with its exit status in the report; ANY nonzero exit is a failure.
+- SKIP the default automated steps below (Steps 1-7) and their Go-specific report format — report per-command results instead (WHAT ran, exit status, error output for failures). Step 8 still applies.
+- Custom mode applies regardless of the command list in your spawn task — task-provided lists (`make ci`, `go test ./...`, ...) are the default-mode fallback only.
+
+If the grep matches nothing, continue with Step 1 — default behavior is unchanged.
+
 ### Step 1: Run Test Suite
 
 ```bash

@@ -78,18 +78,20 @@ Create an isolated git worktree before any file work.
 
 Run directly:
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Not in a git repository"; exit 1; }
+cd "$REPO_ROOT"
 COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 
-if [ "$COMMON_DIR" != "$GIT_DIR" ] && [ "$COMMON_DIR" != ".git" ]; then
-    echo "WORKTREE_PATH=$(git rev-parse --show-toplevel)"
+if [ "$COMMON_DIR" != "$GIT_DIR" ]; then
+    echo "WORKTREE_PATH=$REPO_ROOT"
 else
-    REPO=$(basename $(git rev-parse --show-toplevel))
+    REPO=$(basename "$REPO_ROOT")
     FEATURE=<descriptive-slug-from-task>
     WORKTREE="../${REPO}-worktrees/${FEATURE}"
     mkdir -p "../${REPO}-worktrees"
     git worktree add "$WORKTREE" -b "$FEATURE"
-    echo "WORKTREE_PATH=$(cd $WORKTREE && pwd)"
+    echo "WORKTREE_PATH=$(cd "$WORKTREE" && pwd)"
 fi
 ```
 
