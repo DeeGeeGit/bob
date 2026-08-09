@@ -120,22 +120,29 @@ install-skills:
 	@echo "  /bob:version     - Show Bob version info"
 
 # Companion-reference check. Every "[agent-directory]/<path>" token in an agent
-# prompt must name a file the installers will actually ship. The agent directory
+# prompt must name a regular file the installers will actually ship; the gate
+# validates the quoted token and its file, not the surrounding Read/command
+# syntax (that stays a review responsibility). The agent directory
 # itself is the manifest: everything committed under agents/<name>/ ships to all
 # three runtimes, except the SKILL*.md prompt variants (installed separately with
-# the marker rendered) and hidden entries (rejected here so they cannot silently
-# not-ship). Conventions: no spaces in companion filenames (the token grammar
-# stops at whitespace), no symlinked companions (cp -R copies the link itself),
-# and nothing prunes previously installed files. Companions are copied verbatim
+# the marker rendered) and top-level hidden entries (rejected here so they
+# cannot silently not-ship). Conventions: no spaces in companion filenames (the token grammar
+# stops at whitespace), and nothing prunes previously installed files. No
+# symlinks anywhere under agents/ — cp -R would ship the link itself, so the
+# check rejects them outright. Companions are copied verbatim
 # and never rendered, so the literal marker may not appear inside one.
 #
 # The render below uses sed with a destination byte guard refusing | & and
-# backslash, the bytes sed replacement text cannot carry (measured: & duplicates
+# backslash, the three sed metacharacter bytes this raw interpolation cannot
+# preserve safely, plus a double quote, which sed carries fine but the rendered
+# token's own quoting cannot (measured: & duplicates
 # the matched text; | breaks the expression after the shell already truncated
-# the target at exit 0). If a real machine ever hits the guard, the known
-# drop-in is an awk ENVIRON render: byte-exact, no metacharacter semantics, at
-# the cost of appending a newline to a prompt lacking a trailing one (all
-# current prompt files end with one).
+# the target at exit 0). If a real machine ever hits the guard on those sed
+# bytes, the known drop-in is an awk ENVIRON render: byte-exact, no
+# metacharacter semantics, at the cost of appending a newline to a prompt
+# lacking a trailing one (all current prompt files end with one). The awk
+# route does not help a double-quoted destination — the quote would render
+# byte-exactly and still break the token's own quoting.
 check-agents:
 	@fail=0; \
 	for p in agents/*/SKILL*.md; do \
@@ -144,7 +151,7 @@ check-agents:
 		occ=$$(grep -o '\[agent-directory\]' "$$p" | wc -l); \
 		ok=$$(grep -o '"\[agent-directory\]/[A-Za-z0-9._/-]\{1,\}"' "$$p" | wc -l); \
 		if [ "$$occ" != "$$ok" ]; then \
-			echo "❌ $$p: a marker reference is not a complete quoted \"[agent-directory]/<path>\" token:"; \
+			echo "❌ $$p: a marker reference is not a quoted \"[agent-directory]/<path>\" token:"; \
 			grep -n '\[agent-directory\]' "$$p" | sed 's/^/     /'; \
 			fail=1; \
 		fi; \
@@ -155,7 +162,7 @@ check-agents:
 				.*) echo "❌ $$p: [agent-directory]/$$t names a hidden entry, which never ships"; fail=1; continue ;; \
 			esac; \
 			case "/$$t/" in */../*) echo "❌ $$p: [agent-directory]/$$t must stay inside the agent directory"; fail=1; continue ;; esac; \
-			[ -e "$$dir/$$t" ] || { echo "❌ $$p: [agent-directory]/$$t does not exist ($$dir/$$t)"; fail=1; }; \
+			[ -f "$$dir/$$t" ] || { echo "❌ $$p: [agent-directory]/$$t is not a shipped regular file ($$dir/$$t)"; fail=1; }; \
 		done; \
 	done; \
 	for e in agents/*/.[!.]* agents/*/..?*; do \
@@ -163,6 +170,11 @@ check-agents:
 		echo "❌ $$e: hidden entries under an agent directory are never installed; rename or remove"; \
 		fail=1; \
 	done; \
+	links=$$(find agents -type l); \
+	if [ -n "$$links" ]; then \
+		echo "$$links" | sed 's/^/❌ /; s/$$/: no symlinks anywhere under agents\/ (cp -R would ship the link itself); commit the real file/'; \
+		fail=1; \
+	fi; \
 	bad=$$(find agents -mindepth 2 -type f | grep -v '^agents/[^/]*/SKILL[^/]*\.md$$' | while read -r f; do grep -qF '[agent-directory]' "$$f" && echo "$$f"; done); \
 	if [ -n "$$bad" ]; then \
 		echo "$$bad" | sed 's/^/❌ /; s/$$/: companions are copied verbatim and never rendered; reference files relative to the script itself/'; \
@@ -183,7 +195,7 @@ install-agents: check-agents
 				agent=$$(basename "$$agent_dir"); \
 				echo "   Installing $$agent agent..."; \
 				DEST_DIR="$$AGENTS_DIR/$$agent"; \
-				case "$$DEST_DIR" in *'|'*|*'&'*|*'\'*) echo "❌ $$DEST_DIR contains | & or a backslash, which the marker render cannot carry"; exit 1 ;; esac; \
+				case "$$DEST_DIR" in *'|'*|*'&'*|*'\'*|*'"'*) echo "❌ $$DEST_DIR contains | & \" or a backslash, which cannot be rendered safely into quoted marker references"; exit 1 ;; esac; \
 				mkdir -p "$$DEST_DIR" || exit 1; \
 				if [ "$(SPEC)" = "simple" ] && [ -f "$$agent_dir/SKILL.simple.md" ]; then \
 					SRC="$$agent_dir/SKILL.simple.md"; \
@@ -893,7 +905,7 @@ install-pi: check-agents
 		fi; \
 		echo "   Installing $$agent..."; \
 		DEST_DIR="$$AGENTS_DIR/$$agent"; \
-		case "$$DEST_DIR" in *'|'*|*'&'*|*'\'*) echo "❌ $$DEST_DIR contains | & or a backslash, which the marker render cannot carry"; exit 1 ;; esac; \
+		case "$$DEST_DIR" in *'|'*|*'&'*|*'\'*|*'"'*) echo "❌ $$DEST_DIR contains | & \" or a backslash, which cannot be rendered safely into quoted marker references"; exit 1 ;; esac; \
 		mkdir -p "$$DEST_DIR" || exit 1; \
 		if [ "$$NEED_TRANSFORM" = "1" ]; then \
 			sed "$$PI_TRANSFORM; s|\[agent-directory\]|$$DEST_DIR|g" "$$SRC" > "$$DEST_DIR/SKILL.md" || { echo "❌ render failed for $$SRC"; exit 1; }; \
@@ -1078,7 +1090,7 @@ install-wllr install-wllr-skills: check-agents
 		fi; \
 		echo "   Installing $$agent agent prompt..."; \
 		DEST_DIR="$$SKILLS_DIR/$$agent"; \
-		case "$$DEST_DIR" in *'|'*|*'&'*|*'\'*) echo "❌ $$DEST_DIR contains | & or a backslash, which the marker render cannot carry"; exit 1 ;; esac; \
+		case "$$DEST_DIR" in *'|'*|*'&'*|*'\'*|*'"'*) echo "❌ $$DEST_DIR contains | & \" or a backslash, which cannot be rendered safely into quoted marker references"; exit 1 ;; esac; \
 		mkdir -p "$$DEST_DIR" || exit 1; \
 		sed "s|\[agent-directory\]|$$DEST_DIR|g" "$$SRC" > "$$DEST_DIR/SKILL.md" || { echo "❌ render failed for $$SRC"; exit 1; }; \
 		for extra in "$$agent_dir"/*; do \
