@@ -175,9 +175,10 @@ export BOB_CONFIRM_BEFORE_PUSH=1
 Restart Claude Code after editing settings. With the flag set to exactly `1`,
 the workflow commits locally, presents every commit the push will publish
 (with the new commit's details; a resumed publish-failure preview shows the
-fields its report carries) and the proposed PR body verbatim, and asks
-`Push this branch and create the PR? [push / stop]` — `stop` creates no pull
-request and pushes nothing new.
+fields its report carries), the proposed PR title, and the proposed PR body
+verbatim, and asks
+`Push this branch and create or update its PR with the title and body shown above? [push / stop]`
+— `stop` neither creates nor updates a pull request and pushes nothing new.
 
 Scope: the standard publication path (`/bob:code-review`, including when the
 `/bob:work` variants invoke it). `bob-stage-prs` keeps its own built-in

@@ -49,8 +49,10 @@ One loop counter is shared by both FIX entries — ROUTE→FIX and TEST-failure�
 - ✅ At COMMIT: run the confirm-flag echo, `cat .bob/state/pr-body.md` to present
   a proposed PR body verbatim, list the unpushed range
   (`git log --oneline HEAD --not --remotes=origin`), run the resume checks
-  (`git rev-parse HEAD`, `git branch --show-current`, and the repo-root-scoped
-  status in Phase 6), and delete `.bob/state/pr-body.md` when a paused
+  (`git rev-parse HEAD`, `git branch --show-current`, the repo-root-scoped
+  status in Phase 6, and
+  `test -r .bob/state/pr-body.md && test -r .bob/state/pr-title.txt`), and
+  delete `.bob/state/pr-body.md` and `.bob/state/pr-title.txt` when a paused
   publication is declined or stale (Phase 6)
 
 **You NEVER:**
@@ -377,9 +379,13 @@ enabled, pause for the user's approval before anything is published.
    command as 4a), append this line to `.bob/state/commit-prompt.md`:
    "An earlier prepare pass already created commit [HEAD] on this branch; do
    not create a new commit — publish it: push, create the PR, and delete
-   .bob/state/pr-body.md once the PR exists." Otherwise delete any stale
-   `.bob/state/pr-body.md` (a mismatched `commit.md` record is ignored and
-   does not activate this resume arm). Then spawn commit-agent as before:
+   .bob/state/pr-body.md and .bob/state/pr-title.txt once the PR exists."
+   Otherwise delete any stale `.bob/state/pr-body.md` and
+   `.bob/state/pr-title.txt` (a mismatched `commit.md` record is ignored and
+   does not activate this resume arm). A `FAILED` record — whether from a
+   `CONFIRM_MODE: PUBLISH` run or an earlier flag-off publication attempt —
+   does not activate this arm; recovery with confirmation off is manual.
+   Then spawn commit-agent as before:
    ```
    subagent({
   agent: "commit-agent",
@@ -399,20 +405,27 @@ enabled, pause for the user's approval before anything is published.
    a. Resume check: if `.bob/state/commit.md` already reads
       `STATUS: AWAITING_CONFIRMATION`, its BRANCH and HEAD match live
       `git branch --show-current` and `git rev-parse HEAD`, the tree is clean
-      apart from `.bob/state` — run the status from the repo root:
+      apart from `.bob/state` — the status command from the repo root:
       `(cd "$(git rev-parse --show-toplevel)" && git status --porcelain -- . ':(exclude).bob/state')`
-      prints nothing — and `.bob/state/pr-body.md` is readable, skip to (c):
-      an earlier paused run is being resumed. If commit.md instead reports a
-      publish FAILURE that left the branch pushed at the previewed SHA with no
-      confirmed PR and `.bob/state/pr-body.md` still readable, also skip to
-      (c) — on `push`, the publish pass re-runs the push step (safe to
-      repeat), then continues at PR creation. Likewise if commit.md reports a
-      publish FAILURE whose reason is a publication gate block, with BRANCH
-      and HEAD still matching live state, the tree clean apart from
-      `.bob/state` (same root-scoped status command as above), and the body
-      readable: skip to (c) — on `push`, the publish pass re-runs the gated
-      push. Otherwise delete any stale `.bob/state/pr-body.md` before
-      continuing.
+      exits successfully and prints nothing — and both state files are
+      readable
+      (`test -r .bob/state/pr-body.md && test -r .bob/state/pr-title.txt`
+      exits successfully), skip to (c): an earlier paused run is being
+      resumed. If commit.md instead reports `STATUS: FAILED` with
+      `PUSHED: yes` and `PR_CONFIRMED: no`, its BRANCH and HEAD still match
+      live state, the tree is clean apart from `.bob/state` (same root-scoped
+      status command as above), and both state files are readable (same
+      `test -r` command), skip to (c) — on `push`, the publish pass re-runs
+      the push step (safe to repeat), then continues at Step 6 to create or
+      update the PR. Likewise if commit.md reports a publish FAILURE whose
+      reason is a publication gate block, with BRANCH and HEAD still matching
+      live state, the tree clean apart from `.bob/state` (same root-scoped
+      status command as above), and both state files readable (same
+      `test -r` command): skip to (c) — on `push`, the publish pass re-runs
+      the gated push. Otherwise delete any stale `.bob/state/pr-body.md` and
+      `.bob/state/pr-title.txt` before continuing — a tree with changes
+      outside `.bob/state` never resumes: it falls through to (b), so the
+      fresh prepare pass commits the new work and the preview covers it.
 
    b. Spawn the prepare pass:
       ```
@@ -420,9 +433,10 @@ enabled, pause for the user's approval before anything is published.
   agent: "commit-agent",
   task: "CONFIRM_MODE: PREPARE
                 Read .bob/state/commit-prompt.md for instructions.
-                Create the commit and write the proposed PR body to
-                .bob/state/pr-body.md, but do NOT push and do NOT create a PR.
-                Write status to .bob/state/commit.md.",
+                Create the commit, write the proposed PR body to
+                .bob/state/pr-body.md and the proposed PR title to
+                .bob/state/pr-title.txt, but do NOT push and do NOT create
+                a PR. Write status to .bob/state/commit.md.",
   context: "fresh"
 })
       ```
@@ -435,13 +449,14 @@ enabled, pause for the user's approval before anything is published.
       `git log --oneline HEAD --not --remotes=origin` and present its output
       verbatim (the push publishes the branch ref, so unpushed ancestors ship
       with it; the list makes that visible). Then show the commit details from
-      `.bob/state/commit.md` (branch, SHA, message, files — a publish-failure
-      report carries branch, SHA, and title only; show what it has), the PR
-      title, and the body via:
+      `.bob/state/commit.md` (branch, SHA, message, files; for a
+      publish-failure report, show every field it carries, including its
+      publication state), the PR title, and the body via:
       ```bash
       cat .bob/state/pr-body.md
       ```
-      Then ask exactly: `Push this branch and create the PR? [push / stop]`
+      Then ask exactly:
+      `Push this branch and create or update its PR with the title and body shown above? [push / stop]`
 
    d. Route on the reply:
       - Exactly `push` → spawn the publish pass:
@@ -453,8 +468,8 @@ enabled, pause for the user's approval before anything is published.
                 Commit SHA: [HEAD from commit.md]
                 PR title: [TITLE from commit.md]
                 Verify the branch and SHA match live state, then push and
-                create the PR with the approved body file. Do NOT create a
-                commit. Write status to .bob/state/commit.md.",
+                create the PR with the approved title and body files. Do NOT
+                create a commit. Write status to .bob/state/commit.md.",
   context: "fresh"
 })
         ```
@@ -464,12 +479,13 @@ enabled, pause for the user's approval before anything is published.
         fresh prepare pass re-presents only work a confirm-mode pass recorded,
         and a clean live commit with no such record reports "nothing to
         commit").
-      - Exactly `stop` → delete `.bob/state/pr-body.md`, then exit with
+      - Exactly `stop` → delete `.bob/state/pr-body.md` and
+        `.bob/state/pr-title.txt`, then exit with
         STATUS: FAILED, reason "user declined publication; branch retained at
-        [sha]; no pull request confirmed created" (add "the branch was already
-        pushed by an earlier attempt" when resuming a post-push failure —
-        never claim nothing was pushed in that case). Never continue to
-        MONITOR or COMPLETE.
+        [sha]; approved PR creation or update was not confirmed" (add "the
+        branch was already pushed by an earlier attempt" when commit.md's For
+        Orchestrator PUSHED field is yes — never claim nothing was pushed in
+        that case). Never continue to MONITOR or COMPLETE.
       - Anything else → ask the question again (repeat only the question, not
         the preview).
 
@@ -485,7 +501,7 @@ enabled, pause for the user's approval before anything is published.
    ```markdown
    # Monitor Instructions
 
-   Monitor the PR that was just created.
+   Monitor the PR that was just created or updated.
 
    PR details: see .bob/state/commit.md for the PR URL.
 
@@ -587,7 +603,7 @@ Timestamp: [ISO timestamp]
 ## Details
 [Error output — for a declined publication: "user declined publication; branch
 retained at [sha]", plus either "nothing pushed" or "the branch was already
-pushed by an earlier attempt", whichever is true]
+pushed by an earlier attempt", per commit.md's For Orchestrator PUSHED field]
 ```
 
 A user-declined publication is terminal for this run: the parent must surface
@@ -608,6 +624,7 @@ it and stop — never retry it and never treat it as progress toward COMPLETE.
 | `.bob/state/commit-prompt.md` | Orchestrator | Commit instructions |
 | `.bob/state/commit.md` | commit-agent | Commit/PR status |
 | `.bob/state/pr-body.md` | commit-agent (confirm mode) | Proposed PR body, presented verbatim; passed to `--body-file` without redrafting; deleted on confirmed publish or decline |
+| `.bob/state/pr-title.txt` | commit-agent (confirm mode) | Proposed PR title; the publish commands read it with `--title "$(cat ...)"` so its content passes literally; same lifecycle as pr-body.md |
 | `.bob/state/monitor-prompt.md` | Orchestrator | Monitor instructions |
 | `.bob/state/monitor.md` | monitor-agent | CI/PR status |
 | `.bob/state/code-review-status.md` | Orchestrator | Exit signal for parent |
