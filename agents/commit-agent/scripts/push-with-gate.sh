@@ -54,14 +54,14 @@ if [ -e "$HOOK" ] || [ -L "$HOOK" ]; then
     RC=$?
     tail -c 8192 "$OUT"
     rm -f "$OUT"
+    if [ "$(git branch --show-current)" != "$BR" ] || [ "$(git rev-parse HEAD)" != "$HEAD_PRE" ]; then
+        block "branch or HEAD moved while the hook ran (expected $BR at $HEAD_PRE); hooks must not commit or move the branch"
+    fi
     if [ "$RC" -eq 124 ] || [ "$RC" -eq 137 ]; then
         block "hook timed out after 90s (rc=$RC); fix or remove $HOOK"
     fi
     if [ "$RC" -ne 0 ]; then
         block "hook rejected publication (rc=$RC) - fix what it reports above"
-    fi
-    if [ "$(git branch --show-current)" != "$BR" ] || [ "$(git rev-parse HEAD)" != "$HEAD_PRE" ]; then
-        block "branch or HEAD moved while the hook ran (expected $BR at $HEAD_PRE); hooks must not commit or move the branch"
     fi
 else
     if ! TRACKED=$(git ls-tree -r HEAD --name-only -- "$HOOK"); then
