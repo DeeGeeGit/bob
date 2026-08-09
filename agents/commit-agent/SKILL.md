@@ -16,7 +16,7 @@ When spawned by the work orchestrator at the COMMIT phase, you:
 2. Review git changes (status, diff, log)
 3. Create appropriate commit message
 4. Stage and commit changes
-5. Push to remote and create PR
+5. Push to remote and create PR (a `CONFIRM_MODE: PREPARE` run stops before this — see Input)
 6. Report status to `.bob/state/commit.md`
 
 ## Input
@@ -33,6 +33,44 @@ This file may contain:
 - PR title/description guidance
 - Any special instructions
 
+### Confirm-mode tasks
+
+When your spawn task text carries a `CONFIRM_MODE` line, that line overrides
+anything stale in `.bob/state/commit-prompt.md`:
+
+- **`CONFIRM_MODE: PREPARE`** — run Steps 1-4, skipping Steps 5-7. Draft the PR
+  title and body now: write the body to `.bob/state/pr-body.md` and put the
+  title in the Step 8 report. Then STOP — no push, no PR — and report
+  `STATUS: AWAITING_CONFIRMATION`. If the tree is clean apart from `.bob/state`
+  and `.bob/state/commit.md` already records this branch and the live HEAD from
+  an earlier prepare or publish pass (a publish report carries only branch and
+  HEAD values a prepare pass produced and the user previewed), report that
+  existing commit again instead of failing with "nothing to commit". A clean
+  tree without such a record is a plain "nothing to commit" failure — never
+  offer a commit no confirm-mode pass recorded.
+- **`CONFIRM_MODE: PUBLISH`** — the task text names a branch, a commit SHA, and a
+  PR title. First verify `git branch --show-current` and `git rev-parse HEAD`
+  equal those values byte-for-byte; on any mismatch STOP with a FAILED report
+  saying "HEAD moved since the preview; re-run /bob:code-review to attempt a
+  fresh preview". A fresh prepare pass re-presents only work a confirm-mode
+  pass recorded; a clean live commit with no such record reports "nothing to
+  commit". Never create a commit in this mode. Run Steps 5-8, creating the PR
+  per the Step 6 publish rule (task-provided title, `--body-file`). Delete
+  `.bob/state/pr-body.md` only after Step 7 confirms the PR exists — never on
+  a failure, so a re-run can finish publication. If the push succeeded but PR creation failed,
+  report FAILED noting the branch is pushed — any FAILED report in this mode
+  must record BRANCH, HEAD, TITLE, whether the push succeeded, and whether a
+  PR was confirmed created (the resume path reads those fields; Step 8 lists
+  them for a failed PUBLISH run). On any re-run where
+  the branch is already pushed at the approved SHA and no PR exists, still run
+  Step 5 (it is safe to repeat and applies any repo publication gate), then
+  continue to Step 6. If an OPEN PR for this branch already exists, report its URL as
+  success, note in the report if its title differs from the task title, and
+  delete `.bob/state/pr-body.md`.
+
+Without a `CONFIRM_MODE` line, behave exactly as before — commit, push, and
+create the PR in one run.
+
 ---
 
 ## Git Safety Protocol
@@ -47,6 +85,7 @@ This file may contain:
 - ❌ Amend commits (use NEW commits, not --amend)
 - ❌ Use `git add -A` or `git add .` (stage specific files)
 - ❌ Commit secrets (.env, credentials, API keys)
+- ❌ Stage or commit `.bob/state` (bob's runtime state never ships; stage files by name, never a directory)
 
 **ALWAYS:**
 - ✅ Create NEW commits rather than amending
@@ -171,6 +210,10 @@ EOF
 - Include co-author tag at the end
 - Test the command syntax is valid
 
+**`CONFIRM_MODE: PREPARE` runs stop here.** Do not continue to Step 5 — no push,
+no PR. Write `.bob/state/pr-body.md` and the Step 8 report with
+`STATUS: AWAITING_CONFIRMATION`, then finish.
+
 ### Step 5: Push to Remote
 
 Push the branch:
@@ -185,6 +228,13 @@ git push -u origin $(git branch --show-current)
 - Note the branch name for PR creation
 
 ### Step 6: Create Pull Request
+
+**`CONFIRM_MODE: PUBLISH` runs:** create the PR with the task-provided title and
+the approved body file — `gh pr create --title "[task title]" --body-file
+.bob/state/pr-body.md` — never a fresh heredoc; the user approved that
+file. Delete `.bob/state/pr-body.md` only once Step 7 confirms the PR
+exists. All other runs
+use the heredoc below.
 
 Use `gh` CLI to create PR:
 
@@ -299,6 +349,50 @@ Status: SUCCESS / FAILED
 **NEXT_PHASE:** MONITOR
 ```
 
+**For a `CONFIRM_MODE: PREPARE` run**, write this instead:
+
+```markdown
+# Commit Status
+
+Generated: [ISO timestamp]
+Status: AWAITING_CONFIRMATION
+
+---
+
+## Commit Details
+
+**Branch:** [branch-name]
+**Commit SHA:** [sha]
+**Commit Message:**
+```
+[commit message]
+```
+
+**Files Committed:** [N] files
+- path/to/file1
+- path/to/file2
+
+---
+
+## Proposed Pull Request
+
+**PR Title:** [title]
+**PR Body:** written to .bob/state/pr-body.md (the orchestrator presents it verbatim)
+
+Pushed: no
+PR: none — awaiting user decision
+
+---
+
+## For Orchestrator
+
+**STATUS:** AWAITING_CONFIRMATION
+**BRANCH:** [branch-name]
+**HEAD:** [sha]
+**TITLE:** [title]
+**NEXT_PHASE:** CONFIRM
+```
+
 **If any step fails**, write failure details:
 
 ```markdown
@@ -329,6 +423,22 @@ Status: FAILED
 
 **STATUS:** FAILED
 **ERROR:** [brief error]
+**RETRY:** [yes/no]
+```
+
+**For a `CONFIRM_MODE: PUBLISH` run that fails**, the For Orchestrator block
+must instead carry the fields the orchestrator's resume arms read:
+
+```markdown
+## For Orchestrator
+
+**STATUS:** FAILED
+**ERROR:** [brief error — HEAD moved / push failed / publication gate block / PR creation failed]
+**BRANCH:** [branch-name]
+**HEAD:** [sha]
+**TITLE:** [title]
+**PUSHED:** [yes/no]
+**PR_CONFIRMED:** [yes/no]
 **RETRY:** [yes/no]
 ```
 
@@ -463,9 +573,10 @@ Write(file_path: ".bob/state/commit.md",
 ```
 
 **Status report must include:**
-- ✅ Success/failure status
-- ✅ Commit details (SHA, message, files)
-- ✅ PR details (number, URL, title)
+- ✅ Status (SUCCESS, FAILED, or AWAITING_CONFIRMATION for a PREPARE run)
+- ✅ Commit details (SHA, message, files) — a failed `CONFIRM_MODE: PUBLISH` report carries BRANCH, HEAD, and TITLE instead
+- ✅ PR details (number, URL, title) — for runs that created one; a PREPARE
+  run reports the proposed title and the body file instead
 - ✅ Next steps
 - ✅ Clear signal for orchestrator (STATUS field)
 
@@ -474,12 +585,13 @@ Write(file_path: ".bob/state/commit.md",
 ## Completion Signal
 
 Your task is complete when `.bob/state/commit.md` exists with:
-1. Clear STATUS: SUCCESS or FAILED
+1. Clear STATUS: SUCCESS, FAILED, or AWAITING_CONFIRMATION (`CONFIRM_MODE: PREPARE` runs)
 2. Commit details
 3. PR URL (if successful)
 4. Next phase instruction
 
-The orchestrator will read this file and route to MONITOR phase.
+The orchestrator will read this file and route to MONITOR phase (or to its
+confirm gate when the status is AWAITING_CONFIRMATION).
 
 ---
 
@@ -491,6 +603,8 @@ The orchestrator will read this file and route to MONITOR phase.
 - **Write clear messages** - help future developers understand
 - **Include co-author** - give credit to Claude
 - **Test before push** - verify commit is clean
+- **Honor CONFIRM_MODE** - a PREPARE run never pushes; a PUBLISH run never
+  commits and never redrafts the approved body
 - **Report status clearly** - orchestrator needs to know outcome
 
 Your work enables the MONITOR phase to track PR progress!

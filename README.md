@@ -150,6 +150,38 @@ repo-worktrees/
       └── ...
 ```
 
+## Confirm Before Push (opt-in)
+
+By default bob publishes autonomously at COMMIT. To have `/bob:code-review`
+(and the `/bob:work` variants, which route COMMIT through it) pause and show
+you the exact commit and PR body before anything is pushed, add to
+`~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "BOB_CONFIRM_BEFORE_PUSH": "1"
+  }
+}
+```
+
+Or set an environment variable (Pi and other harnesses read only the
+environment):
+```bash
+export BOB_CONFIRM_BEFORE_PUSH=1
+```
+
+Restart Claude Code after editing settings. With the flag set to exactly `1`,
+the workflow commits locally, presents the commit and the proposed PR body
+verbatim, and asks `Push this branch and create the PR? [push / stop]` —
+`stop` creates no pull request and pushes nothing new.
+
+Scope: the standard publication path (`/bob:code-review`, including when the
+`/bob:work` variants invoke it). `bob-stage-prs` keeps its own built-in
+confirmation step. The `*-simple` skill variants do not support the flag and
+may ignore it. Run one bob workflow per checkout — the pause holds its state
+in `.bob/state` between the two passes.
+
 ## Installation
 
 ```bash

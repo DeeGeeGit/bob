@@ -7,7 +7,7 @@ category: workflow
 
 # Code Review Workflow Orchestrator
 
-You orchestrate the code review lifecycle: review the current diff, fix issues in a bounded loop, commit, and monitor CI. You are a **pure orchestrator** — you never write code, run tests, or execute git commands yourself.
+You orchestrate the code review lifecycle: review the current diff, fix issues in a bounded loop, commit, and monitor CI. You are a **pure orchestrator** — you never write code, run tests, or run state-changing git commands yourself; the only git commands you run are the read-only checks the boundaries section grants.
 
 ## Workflow Diagram
 
@@ -33,7 +33,7 @@ INIT → REVIEW → ROUTE ── no issues (otherwise) ──→ COMMIT → MONI
           └────────────────────────────┘
 ```
 
-One loop counter is shared by both FIX entries — ROUTE→FIX and TEST-failure→FIX each increment it. After 3 FIX iterations: unresolved CRITICAL/HIGH issues — or still-failing tests — exit with `STATUS: NEEDS_BRAINSTORM` (the parent workflow re-brainstorms); if only MEDIUM/LOW issues remain, ROUTE commits them as acceptable instead of looping again.
+One loop counter is shared by both FIX entries — ROUTE→FIX and TEST-failure→FIX each increment it. After 3 FIX iterations: unresolved CRITICAL/HIGH issues — or still-failing tests — exit with `STATUS: NEEDS_BRAINSTORM` (a parent workflow with a BRAINSTORM phase re-brainstorms; a parent without that phase surfaces the reason and stops); if only MEDIUM/LOW issues remain, ROUTE commits them as acceptable instead of looping again.
 
 ---
 
@@ -45,14 +45,22 @@ One loop counter is shared by both FIX entries — ROUTE→FIX and TEST-failure�
 - ✅ Write `.bob/state/*-prompt.md` instruction files for subagents
 - ✅ Write `.bob/state/code-review-status.md` (exit signal for parent workflow)
 - ✅ Run `git diff --name-only HEAD` or `git status --short` to scope reviews
-- ✅ Resolve the repo root (`git rev-parse --show-toplevel`) and read `.bob/config` there — solely to evaluate ROUTE's `verify:` predicate (`grep '^verify: .'`) and to render the current verification-gate state into REVIEW's scope block
+- ✅ Resolve the repo root (`git rev-parse --show-toplevel`) and read `.bob/config` there — to evaluate ROUTE's `verify:` predicate (`grep '^verify: .'`) and to render the current verification-gate state into REVIEW's scope block
+- ✅ At COMMIT: run the confirm-flag echo, `cat .bob/state/pr-body.md` to present
+  a proposed PR body verbatim, run the resume checks (`git rev-parse HEAD`,
+  `git branch --show-current`, and the repo-root-scoped status in Phase 6),
+  and delete `.bob/state/pr-body.md` when a paused publication is declined or
+  stale (Phase 6)
 
 **You NEVER:**
 - ❌ Write or edit source code files
 - ❌ Run `git commit`, `git push`, `gh pr create`
 - ❌ Run tests, linters, or build commands
 - ❌ Make implementation or architectural decisions
-- ❌ Ask the user permission to proceed (run autonomously until COMPLETE)
+- ❌ Ask the user permission to proceed (run autonomously until COMPLETE).
+  Sole exception: the opt-in confirm-before-push pause at COMMIT (Phase 6) —
+  when `BOB_CONFIRM_BEFORE_PUSH` is exactly `1`, asking before publication is
+  required, and it overrides every no-prompt rule in this document
 
 ---
 
@@ -330,11 +338,19 @@ After completion, set `TEST_HAS_RUN` to true (in memory — any TEST run this in
 
 ## Phase 6: COMMIT
 
-**Goal:** Commit the reviewed and fixed code.
+**Goal:** Commit the reviewed and fixed code; when confirm-before-push is
+enabled, pause for the user's approval before anything is published.
 
 **Actions:**
 
-1. Write `.bob/state/commit-prompt.md`:
+1. Check the confirm flag with a literal command — the printed value is the
+   decision input; never assert the flag's state from memory:
+   ```bash
+   echo "confirm-before-push: ${BOB_CONFIRM_BEFORE_PUSH:-unset}"
+   ```
+   Confirm mode is ON only when the command prints `confirm-before-push: 1`.
+
+2. Write `.bob/state/commit-prompt.md`:
    ```markdown
    # Commit Instructions
 
@@ -351,7 +367,7 @@ After completion, set `TEST_HAS_RUN` to true (in memory — any TEST run this in
    - Include brief note on issues addressed
    ```
 
-2. Spawn commit-agent:
+3. **Confirm mode OFF** — spawn commit-agent exactly as before:
    ```
    subagent({
   agent: "commit-agent",
@@ -362,9 +378,84 @@ After completion, set `TEST_HAS_RUN` to true (in memory — any TEST run this in
 })
    ```
 
-3. After completion, read `.bob/state/commit.md`:
+   After completion, read `.bob/state/commit.md`:
    - STATUS: SUCCESS → move to MONITOR
    - STATUS: FAILED → report failure and exit with STATUS: FAILED
+
+4. **Confirm mode ON** — two passes, with the user's decision between them:
+
+   a. Resume check: if `.bob/state/commit.md` already reads
+      `STATUS: AWAITING_CONFIRMATION`, its BRANCH and HEAD match live
+      `git branch --show-current` and `git rev-parse HEAD`, the tree is clean
+      apart from `.bob/state` — run the status from the repo root:
+      `(cd "$(git rev-parse --show-toplevel)" && git status --porcelain -- . ':(exclude).bob/state')`
+      prints nothing — and `.bob/state/pr-body.md` is readable, skip to (c):
+      an earlier paused run is being resumed. If commit.md instead reports a
+      publish FAILURE that left the branch pushed at the previewed SHA with no
+      confirmed PR and `.bob/state/pr-body.md` still readable, also skip to
+      (c) — on `push`, the publish pass re-runs the push step (safe to
+      repeat), then continues at PR creation. Likewise if commit.md reports a
+      publish FAILURE whose reason is a publication gate block, with BRANCH
+      and HEAD still matching live state, the tree clean apart from
+      `.bob/state` (same root-scoped status command as above), and the body
+      readable: skip to (c) — on `push`, the publish pass re-runs the gated
+      push. Otherwise delete any stale `.bob/state/pr-body.md` before
+      continuing.
+
+   b. Spawn the prepare pass:
+      ```
+      subagent({
+  agent: "commit-agent",
+  task: "CONFIRM_MODE: PREPARE
+                Read .bob/state/commit-prompt.md for instructions.
+                Create the commit and write the proposed PR body to
+                .bob/state/pr-body.md, but do NOT push and do NOT create a PR.
+                Write status to .bob/state/commit.md.",
+  context: "fresh"
+})
+      ```
+      Read `.bob/state/commit.md`: STATUS: FAILED → report and exit FAILED;
+      any status other than AWAITING_CONFIRMATION → treat as FAILED and say the
+      pause did not happen.
+
+   c. Present the preview mechanically — never summarize or restate it:
+      show the commit details from `.bob/state/commit.md` (branch, SHA,
+      message, files — a publish-failure report carries branch, SHA, and title
+      only; show what it has), the PR title, and the body via:
+      ```bash
+      cat .bob/state/pr-body.md
+      ```
+      Then ask exactly: `Push this branch and create the PR? [push / stop]`
+
+   d. Route on the reply:
+      - Exactly `push` → spawn the publish pass:
+        ```
+        subagent({
+  agent: "commit-agent",
+  task: "CONFIRM_MODE: PUBLISH
+                Branch: [BRANCH from commit.md]
+                Commit SHA: [HEAD from commit.md]
+                PR title: [TITLE from commit.md]
+                Verify the branch and SHA match live state, then push and
+                create the PR with the approved body file. Do NOT create a
+                commit. Write status to .bob/state/commit.md.",
+  context: "fresh"
+})
+        ```
+        Read `.bob/state/commit.md`: SUCCESS → move to MONITOR; FAILED → relay
+        the reported failure reason in one sentence and exit FAILED (a moved
+        HEAD means: re-run /bob:code-review to attempt a fresh preview; the
+        fresh prepare pass re-presents only work a confirm-mode pass recorded,
+        and a clean live commit with no such record reports "nothing to
+        commit").
+      - Exactly `stop` → delete `.bob/state/pr-body.md`, then exit with
+        STATUS: FAILED, reason "user declined publication; branch retained at
+        [sha]; no pull request confirmed created" (add "the branch was already
+        pushed by an earlier attempt" when resuming a post-push failure —
+        never claim nothing was pushed in that case). Never continue to
+        MONITOR or COMPLETE.
+      - Anything else → ask the question again (repeat only the question, not
+        the preview).
 
 ---
 
@@ -475,11 +566,16 @@ Status: FAILED
 Timestamp: [ISO timestamp]
 
 ## Reason
-[What failed: commit-agent error, monitor unreachable, etc.]
+[What failed: commit-agent error, monitor unreachable, user declined publication, etc.]
 
 ## Details
-[Error output]
+[Error output — for a declined publication: "user declined publication; branch
+retained at [sha]", plus either "nothing pushed" or "the branch was already
+pushed by an earlier attempt", whichever is true]
 ```
+
+A user-declined publication is terminal for this run: the parent must surface
+it and stop — never retry it and never treat it as progress toward COMPLETE.
 
 ---
 
@@ -495,6 +591,7 @@ Timestamp: [ISO timestamp]
 | `.bob/state/test-results.md` | workflow-tester | Test run results |
 | `.bob/state/commit-prompt.md` | Orchestrator | Commit instructions |
 | `.bob/state/commit.md` | commit-agent | Commit/PR status |
+| `.bob/state/pr-body.md` | commit-agent (confirm mode) | Proposed PR body, presented verbatim; passed to `--body-file` without redrafting; deleted on confirmed publish or decline |
 | `.bob/state/monitor-prompt.md` | Orchestrator | Monitor instructions |
 | `.bob/state/monitor.md` | monitor-agent | CI/PR status |
 | `.bob/state/code-review-status.md` | Orchestrator | Exit signal for parent |

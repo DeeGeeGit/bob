@@ -29,7 +29,7 @@ REVIEW is internal to `/bob:code-review` (review → fix → test → commit →
 
 **You CANNOT:** write source files, run git commands, run tests, make implementation decisions.
 
-**Routing:** autonomous throughout. Only prompt the user at COMPLETE for merge confirmation.
+**Routing:** autonomous throughout. Only prompt the user at COMPLETE for merge confirmation. (One configured exception: when `BOB_CONFIRM_BEFORE_PUSH=1`, `/bob:code-review` pauses once at COMMIT for push approval — allow that prompt; it overrides every no-prompt rule in this document.)
 
 **Status lines only — no file summaries:**
 ```
@@ -180,7 +180,7 @@ Invoke the code review skill — it handles review → fix → test → commit �
 Read `.bob/state/code-review-status.md`:
 - `COMPLETE` → COMPLETE
 - `NEEDS_BRAINSTORM` → BRAINSTORM (re-brainstorm with the listed CRITICAL/HIGH issues)
-- `FAILED` → surface error to user
+- `FAILED` → surface the reason to the user and stop (a user-declined publication is terminal: never retry it, never continue toward merge)
 
 ---
 
