@@ -47,10 +47,11 @@ One loop counter is shared by both FIX entries — ROUTE→FIX and TEST-failure�
 - ✅ Run `git diff --name-only HEAD` or `git status --short` to scope reviews
 - ✅ Resolve the repo root (`git rev-parse --show-toplevel`) and read `.bob/config` there — to evaluate ROUTE's `verify:` predicate (`grep '^verify: .'`) and to render the current verification-gate state into REVIEW's scope block
 - ✅ At COMMIT: run the confirm-flag echo, `cat .bob/state/pr-body.md` to present
-  a proposed PR body verbatim, run the resume checks (`git rev-parse HEAD`,
-  `git branch --show-current`, and the repo-root-scoped status in Phase 6),
-  and delete `.bob/state/pr-body.md` when a paused publication is declined or
-  stale (Phase 6)
+  a proposed PR body verbatim, list the unpushed range
+  (`git log --oneline HEAD --not --remotes=origin`), run the resume checks
+  (`git rev-parse HEAD`, `git branch --show-current`, and the repo-root-scoped
+  status in Phase 6), and delete `.bob/state/pr-body.md` when a paused
+  publication is declined or stale (Phase 6)
 
 **You NEVER:**
 - ❌ Write or edit source code files
@@ -367,7 +368,18 @@ enabled, pause for the user's approval before anything is published.
    - Include brief note on issues addressed
    ```
 
-3. **Confirm mode OFF** — spawn commit-agent exactly as before:
+3. **Confirm mode OFF** — first check for a prepared commit left by an
+   earlier confirmation pause (including one abandoned or declined —
+   disabling confirmation supersedes a prior stop): if
+   `.bob/state/commit.md` reads `STATUS: AWAITING_CONFIRMATION`, its BRANCH
+   and HEAD match live `git branch --show-current` and `git rev-parse HEAD`,
+   and the tree is clean apart from `.bob/state` (same root-scoped status
+   command as 4a), append this line to `.bob/state/commit-prompt.md`:
+   "An earlier prepare pass already created commit [HEAD] on this branch; do
+   not create a new commit — publish it: push, create the PR, and delete
+   .bob/state/pr-body.md once the PR exists." Otherwise delete any stale
+   `.bob/state/pr-body.md` (a mismatched `commit.md` record is ignored and
+   does not activate this resume arm). Then spawn commit-agent as before:
    ```
    subagent({
   agent: "commit-agent",
@@ -418,10 +430,14 @@ enabled, pause for the user's approval before anything is published.
       any status other than AWAITING_CONFIRMATION → treat as FAILED and say the
       pause did not happen.
 
-   c. Present the preview mechanically — never summarize or restate it:
-      show the commit details from `.bob/state/commit.md` (branch, SHA,
-      message, files — a publish-failure report carries branch, SHA, and title
-      only; show what it has), the PR title, and the body via:
+   c. Present the preview mechanically — never summarize or restate it.
+      First show every commit the push will publish — run
+      `git log --oneline HEAD --not --remotes=origin` and present its output
+      verbatim (the push publishes the branch ref, so unpushed ancestors ship
+      with it; the list makes that visible). Then show the commit details from
+      `.bob/state/commit.md` (branch, SHA, message, files — a publish-failure
+      report carries branch, SHA, and title only; show what it has), the PR
+      title, and the body via:
       ```bash
       cat .bob/state/pr-body.md
       ```
