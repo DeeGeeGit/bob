@@ -113,6 +113,19 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 - Be specific about changes
 - Match existing commit style
 
+**Movement-block re-run guard (apply before Step 3):** Before staging or
+committing on any re-run, inspect `.bob/state/commit.md` for a recorded gate
+block. When its quoted block line says branch or HEAD moved while the hook
+ran, ignore the report's recorded branch/SHA and all Step 5 retry/supersede
+arms. First require the live branch and HEAD to equal exactly the expected
+values that block line names. If either differs, stop without staging,
+committing, or pushing; clean or dirty, the hook-made state must be undone by
+restoring the named pre-hook branch and HEAD, never published or used as a
+repair base. If both match, restoration is established for this run: a clean
+tree may skip the commit steps and run the Step 5 wrapper, and a dirty tree
+may follow the normal commit flow from that restored HEAD and then run the
+wrapper.
+
 ### Step 3: Stage Files
 
 **Stage specific files by name** (never use `git add -A` or `git add .`):
@@ -184,8 +197,10 @@ publication retry —
 skip the commit steps and run the push call below again; when the recorded
 branch equals the live branch and the recorded SHA is an ancestor of the live
 HEAD (a repair was already committed), the current commit supersedes it — run
-the push call for the live HEAD. A dirty tree goes
-through the normal flow (the repair still needs committing).
+the push call for the live HEAD. A dirty tree goes through the normal flow
+(the repair still needs committing). Movement blocks are governed exclusively
+by the pre-Step-3 guard above; neither recorded-state retry arm nor the
+ancestor/supersede case in this paragraph applies to one.
 
 This step describes the standard publication flow; a spawn task that provides
 its own explicit push steps (bob-stage-prs does) governs its own flow.

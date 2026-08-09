@@ -61,7 +61,7 @@ if [ -e "$HOOK" ] || [ -L "$HOOK" ]; then
         block "hook rejected publication (rc=$RC) - fix what it reports above"
     fi
     if [ "$(git branch --show-current)" != "$BR" ] || [ "$(git rev-parse HEAD)" != "$HEAD_PRE" ]; then
-        block "branch or HEAD moved while the hook ran; hooks must not commit or move the branch"
+        block "branch or HEAD moved while the hook ran (expected $BR at $HEAD_PRE); hooks must not commit or move the branch"
     fi
 else
     if ! TRACKED=$(git ls-tree -r HEAD --name-only -- "$HOOK"); then
