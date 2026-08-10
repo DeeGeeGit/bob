@@ -405,8 +405,10 @@ enabled, pause for the user's approval before anything is published.
    a. Resume check: if `.bob/state/commit.md` already reads
       `STATUS: AWAITING_CONFIRMATION`, its BRANCH and HEAD match live
       `git branch --show-current` and `git rev-parse HEAD`, the tree is clean
-      apart from `.bob/state` — the status command from the repo root:
-      `(cd "$(git rev-parse --show-toplevel)" && git status --porcelain -- . ':(exclude).bob/state')`
+      apart from `.bob/state` — the status command, literally excluding the
+      state directory where INIT created it (`--show-prefix` is captured
+      before entering the root; it is empty when already there):
+      `(P=$(git rev-parse --show-prefix) && cd "$(git rev-parse --show-toplevel)" && git status --porcelain -- . ":(exclude,literal)${P}.bob/state")`
       exits successfully and prints nothing — and both state files are
       readable
       (`test -r .bob/state/pr-body.md && test -r .bob/state/pr-title.txt`
