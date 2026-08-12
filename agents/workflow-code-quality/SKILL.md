@@ -1,7 +1,7 @@
 ---
 name: workflow-code-quality
 description: Checks Go code for idiomatic patterns, quality, and best practices
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: sonnet
 ---
 

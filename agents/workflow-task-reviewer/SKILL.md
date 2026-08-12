@@ -1,7 +1,7 @@
 ---
 name: workflow-task-reviewer
 description: Validates that implementation accomplishes the requested task
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: sonnet
 ---
 
