@@ -102,7 +102,7 @@ make hooks                  # Optional: pre-commit quality checks
 /bob:work "Add rate limiting to API"
 ```
 
-The skill creates a worktree, spawns teammate agents that work concurrently, and drives autonomously from INIT through COMMIT — only prompting at the final merge.
+The skill creates a worktree, spawns teammate agents that work concurrently, and drives autonomously from INIT through COMMIT — only prompting at the final merge (plus, when `BOB_CONFIRM_BEFORE_PUSH=1`, a single sanctioned push-approval prompt before publication).
 
 ---
 
