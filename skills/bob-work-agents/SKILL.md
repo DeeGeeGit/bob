@@ -33,10 +33,10 @@ Each phase has specific prerequisites that MUST be satisfied before proceeding.
 ## Flow Control Rules
 
 **Loop-back paths (the ONLY exceptions to forward progression):**
-- **REVIEW → BRAINSTORM**: CRITICAL/HIGH issues found during review require re-brainstorming (code-review routes this internally)
+- **REVIEW → BRAINSTORM**: CRITICAL/HIGH issues found during review require re-brainstorming (code-review signals this by exiting `NEEDS_BRAINSTORM`; you route on it)
 - **TEST → EXECUTE**: Test failures require code fixes
 
-Note: MONITOR is handled inside `/bob:code-review`. CI failures loop back to REVIEW within that skill.
+Note: MONITOR is handled inside `/bob:code-review`. In-progress CI is watched within that skill; a failed CI run exits it as `NEEDS_BRAINSTORM` for you to route.
 
 <critical_gate>
 REVIEW phase is MANDATORY - it cannot be skipped even if tests pass.
@@ -155,7 +155,7 @@ based solely on severity distribution, not subjective judgment.
 
 **CRITICAL: The orchestrator drives forward relentlessly. It does NOT ask for permission.**
 
-The workflow runs autonomously from INIT through COMMIT. The orchestrator's job is to keep the pipeline moving — spawn an agent, read the result, route to the next phase, repeat. No pauses, no confirmations, no "should I continue?" prompts.
+The workflow runs autonomously from INIT through COMMIT. The orchestrator's job is to keep the pipeline moving — spawn an agent, read the result, route to the next phase, repeat. No pauses, no confirmations, no "should I continue?" prompts. One configured exception: when `BOB_CONFIRM_BEFORE_PUSH=1`, /bob:code-review pauses once at COMMIT for push approval — that prompt is sanctioned and overrides every no-prompt rule in this document.
 
 **Auto-routing rules (inspired by GSD deviation handling):**
 
@@ -167,9 +167,9 @@ The workflow runs autonomously from INIT through COMMIT. The orchestrator's job 
 | Review complete (clean) | code-review commits and proceeds to COMPLETE | No |
 | Loop-back occurs | Log why, continue automatically | No |
 | Agent fails with error | Retry once automatically | Only if retry also fails |
-| COMPLETE phase (merge PR) | Confirm with user | **Yes — only prompt in entire workflow** |
+| COMPLETE phase (merge PR) | Confirm with user | **Yes — the only standard prompt (plus the sanctioned push-approval pause when `BOB_CONFIRM_BEFORE_PUSH=1`)** |
 
-**The ONLY user prompt in the standard workflow is the final merge confirmation at COMPLETE.**
+**The ONLY user prompts in the standard workflow are the final merge confirmation at COMPLETE and, when `BOB_CONFIRM_BEFORE_PUSH=1`, the single push-approval prompt inside /bob:code-review.**
 
 Everything else is automatic. The orchestrator logs brief status lines so the user can follow along, but never stops to ask. If something fails, it retries or loops back per the routing rules. If a loop-back is needed, it explains what happened and immediately continues.
 
@@ -531,7 +531,10 @@ The code-review skill handles the complete cycle:
 4. Creates commit and pushes PR (commit-agent)
 5. Monitors CI (monitor-agent)
 
-After code-review completes, proceed to COMPLETE.
+After code-review completes, read `.bob/state/code-review-status.md`:
+- `COMPLETE` → proceed to COMPLETE
+- `NEEDS_BRAINSTORM` → BRAINSTORM (re-brainstorm with the listed CRITICAL/HIGH issues)
+- `FAILED` → surface the reason to the user and stop. A user-declined publication is terminal: never retry it, never continue toward merge.
 
 ---
 
@@ -615,8 +618,8 @@ REVIEW:
 
 **Flow Control:**
 - Execute phases in exact order: INIT → WORKTREE → BRAINSTORM → PLAN → EXECUTE → TEST → REVIEW → COMPLETE
-- Drive forward relentlessly — only prompt at COMPLETE (merge confirmation)
-- TEST → EXECUTE is the ONLY outer loop-back; all REVIEW loop-backs are internal to `/bob:code-review`
+- Drive forward relentlessly — only prompt at COMPLETE (merge confirmation) or at the sanctioned push-approval pause when `BOB_CONFIRM_BEFORE_PUSH=1`
+- TEST → EXECUTE and REVIEW's `NEEDS_BRAINSTORM` → BRAINSTORM are the only outer loop-backs; all other REVIEW loop-backs are internal to `/bob:code-review`
 - NEVER skip REVIEW phase
 - Validate test passage via `.bob/state/test-results.md` before REVIEW
 
@@ -633,7 +636,7 @@ REVIEW:
 **Remember:**
 - You are the **orchestrator** — you read state files, spawn agents, and make routing decisions
 - **Never write files** — all writes are done by subagents
-- **Never prompt the user** — except at COMPLETE to confirm merge
+- **Never prompt the user** — except at COMPLETE to confirm merge, and the sanctioned push-approval pause inside /bob:code-review when `BOB_CONFIRM_BEFORE_PUSH=1`
 - **Subagents report findings objectively** — you make all pass/fail and routing determinations
 - Log brief status lines between phases so the user can follow along
 

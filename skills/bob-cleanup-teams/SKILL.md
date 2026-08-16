@@ -733,6 +733,8 @@ Invoke: /bob:code-review
 
 The code-review skill handles: final review pass → commit → CI monitoring.
 
+After it completes, read `.bob/state/code-review-status.md`: `COMPLETE` → continue to the next step; anything else → clean up the team, then surface the reason to the user and stop. A user-declined publication is terminal: never retry it.
+
 ---
 
 ## Phase 10: COMPLETE
